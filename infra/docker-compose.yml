@@ -1,0 +1,59 @@
+services:
+  # Always started -- registration with the registry is mandatory (see
+  # BasyxClient.upload / `just basyx-upload`), and the AAS Web UI itself
+  # fetches from AAS_REGISTRY_PATH on load, so it 500s/"Failed to fetch"
+  # without this running.
+  aas-registry:
+    image: eclipsebasyx/aas-registry-log-mem:2.0.0-SNAPSHOT
+    container_name: asset-forge-aas-registry
+    ports:
+      - "${AAS_REGISTRY_PORT:-8082}:8080"
+    environment:
+      - BASYX_CORS_ALLOWED_ORIGINS=*
+      - BASYX_CORS_ALLOWED_METHODS=GET,POST,PUT,DELETE,OPTIONS,PATCH
+    restart: unless-stopped
+
+  aas-environment:
+    image: eclipsebasyx/aas-environment:2.0.0-SNAPSHOT
+    container_name: asset-forge-aas-environment
+    depends_on:
+      - aas-registry
+    ports:
+      - "${AAS_ENV_PORT:-8081}:8081"
+    environment:
+      # Note: confirmed (in the reference project this pipeline's BaSyx
+      # client was informed by) that these env vars alone do NOT make the
+      # server auto-register descriptors on upload -- BasyxClient.upload()
+      # registers them explicitly itself. Left set anyway since it's
+      # otherwise harmless and documents the intended registry pairing.
+      - BASYX_AASREPOSITORY_FEATURE_REGISTRYINTEGRATION=http://aas-registry:8080/shell-descriptors
+      - BASYX_SUBMODELREPOSITORY_FEATURE_REGISTRYINTEGRATION=http://aas-registry:8080/submodel-descriptors
+      - BASYX_CORS_ALLOWED_ORIGINS=*
+      - BASYX_CORS_ALLOWED_METHODS=GET,POST,PUT,DELETE,OPTIONS,PATCH
+      # Spring Boot's multipart defaults (~1MB/file) are way too small for a
+      # real plant's .aasx -- confirmed live: digihub_building's 5.7MB
+      # package 413'd ("MaxUploadSizeExceededException") until these were
+      # raised. 200MB comfortably covers plants larger than the ones in
+      # assets/ today.
+      - SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE=200MB
+      - SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE=200MB
+    restart: unless-stopped
+
+  aas-web-ui:
+    image: eclipsebasyx/aas-gui:latest
+    container_name: asset-forge-aas-web-ui
+    ports:
+      - "${AAS_UI_PORT:-3000}:3000"
+    environment:
+      # Read client-side by the browser, so these need to be reachable as
+      # "localhost:<port>" from the host, not the in-network service names.
+      - BASE_PATH=/
+      - ALLOW_EDITING=true
+      - ALLOW_UPLOADING=true
+      - AAS_REGISTRY_PATH=http://localhost:${AAS_REGISTRY_PORT:-8082}/shell-descriptors
+      - AAS_REPO_PATH=http://localhost:${AAS_ENV_PORT:-8081}/shells
+      - SUBMODEL_REPO_PATH=http://localhost:${AAS_ENV_PORT:-8081}/submodels
+    depends_on:
+      - aas-environment
+      - aas-registry
+    restart: unless-stopped
