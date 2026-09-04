@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asset Forge - Visualizador Web de Gêmeo Digital</title>
+    
+    <!-- Fonts Google: Outfit & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Estilos CSS do Visualizador -->
+    <link rel="stylesheet" href="css/style.css">
+    
+    <!-- Import Map para Three.js e Addons -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <!-- Topbar / Cabeçalho da Aplicação -->
+    <header class="topbar">
+        <div class="brand">
+            <div class="logo-icon">⚡</div>
+            <div class="brand-text">
+                <span class="title">Digital Twin Asset Forge</span>
+                <span class="subtitle">Visualizador 3D & Metadados AAS</span>
+            </div>
+        </div>
+
+        <div class="topbar-controls">
+            <!-- Seletor de Modelo -->
+            <div class="control-group">
+                <label for="model-select">Projeto:</label>
+                <select id="model-select" class="custom-select">
+                    <option value="">Carregando projetos...</option>
+                </select>
+            </div>
+
+            <!-- Badge de Status do BaSyx -->
+            <div id="basyx-status" class="status-badge offline">
+                <span class="status-dot"></span>
+                <span class="status-text">BaSyx Offline</span>
+            </div>
+
+            <!-- Botões de Ação da Câmera e Alertas -->
+            <button id="btn-reset-camera" class="btn btn-secondary" title="Resetar visão da câmera">
+                🎯 Centralizar 3D
+            </button>
+            <button id="btn-toggle-alerts" class="btn btn-warning" title="Painel de Alertas">
+                ⚠️ Alertas <span id="alert-count-badge" class="badge">0</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Layout Principal com Sidebar Esquerda, Canvas 3D e Dashboard Direita -->
+    <main class="main-layout">
+        
+        <!-- Sidebar Esquerda: Árvore de Ativos do BaSyx -->
+        <aside id="sidebar-left" class="sidebar">
+            <div class="sidebar-header">
+                <h3>🌳 Árvore de Ativos (BaSyx)</h3>
+                <span id="asset-count" class="node-count">0 ativos</span>
+            </div>
+            <div class="search-box">
+                <input type="text" id="tree-search" placeholder="🔍 Buscar ativo por nome ou ID..." />
+            </div>
+            <div id="tree-container" class="tree-content">
+                <div class="loading-spinner">Carregando estrutura BaSyx...</div>
+            </div>
+        </aside>
+
+        <!-- Viewport 3D (Three.js WebGL Canvas) -->
+        <section class="viewport-section">
+            <canvas id="webgl-canvas"></canvas>
+            
+            <!-- Tooltip/Badge de Informação de Hover 3D -->
+            <div id="hover-tooltip" class="hover-tooltip"></div>
+
+            <!-- Controle Flutuante de Câmera -->
+            <div class="floating-controls">
+                <button id="btn-view-top" class="btn-icon" title="Visão Superior">🔝</button>
+                <button id="btn-view-front" class="btn-icon" title="Visão Frontal">👁️</button>
+                <button id="btn-toggle-wireframe" class="btn-icon" title="Alternar Modo Wireframe">🌐</button>
+            </div>
+        </section>
+
+        <!-- Sidebar Direita / Dashboard de Metadados & Séries Temporais -->
+        <aside id="sidebar-right" class="sidebar">
+            <div class="sidebar-header tabs-header">
+                <button class="tab-btn active" data-tab="tab-metadata">📋 Metadados AAS</button>
+                <button class="tab-btn" data-tab="tab-telemetry">📈 Séries Temporais</button>
+                <button class="tab-btn" data-tab="tab-alerts">🚨 Alertas IA</button>
+            </div>
+
+            <div class="sidebar-body">
+                <!-- Aba 1: Metadados AAS do Elemento Selecionado -->
+                <div id="tab-metadata" class="tab-content active">
+                    <div id="metadata-header" class="element-header-card">
+                        <div class="element-title">Nenhum elemento selecionado</div>
+                        <div class="element-subtitle">Clique em uma malha 3D ou nó da árvore para inspecionar</div>
+                    </div>
+                    <div id="metadata-content" class="metadata-sections">
+                        <!-- Preenchido dinamicamente via JS -->
+                    </div>
+                </div>
+
+                <!-- Aba 2: Dashboard de Séries Temporais e Telemetria -->
+                <div id="tab-telemetry" class="tab-content">
+                    <div id="telemetry-header" class="element-header-card">
+                        <div class="element-title">Telemetria do Ativo</div>
+                        <div class="element-subtitle">Selecione um painel solar ou inversor</div>
+                    </div>
+                    <div id="telemetry-charts" class="telemetry-grid">
+                        <div class="empty-state">Selecione um ativo para carregar gráficos temporais</div>
+                    </div>
+                </div>
+
+                <!-- Aba 3: Painel de Alertas e Simulação -->
+                <div id="tab-alerts" class="tab-content">
+                    <div class="alert-actions-bar">
+                        <h4>Simulador de Anomalias (IA)</h4>
+                        <div class="simulation-buttons">
+                            <button class="btn-sim overheat" onclick="window.triggerSimulatedAlert('Sobreaquecimento')">🔥 Sobreaquecimento</button>
+                            <button class="btn-sim dirt" onclick="window.triggerSimulatedAlert('Sujeira')">🧹 Sujeira</button>
+                            <button class="btn-sim overcurrent" onclick="window.triggerSimulatedAlert('Sobrecorrente')">⚡ Sobrecorrente</button>
+                            <button class="btn-sim night" onclick="window.triggerSimulatedAlert('Noite')">🌙 Modo Noturno</button>
+                        </div>
+                    </div>
+                    <div id="active-alerts-list" class="alerts-list">
+                        <div class="empty-state">Nenhum alerta ativo no momento</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- Módulo Principal JS -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -18,6 +18,9 @@ dependencies = [
     "rich>=13",
     "loguru>=0.7",
     "requests>=2.31",
+    "fastapi>=0.100",
+    "uvicorn>=0.22",
+    "httpx>=0.24",
 ]
 
 [project.optional-dependencies]

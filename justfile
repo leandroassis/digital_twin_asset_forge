@@ -20,6 +20,19 @@ setup:
 convert project *args:
     {{forge}} convert assets/{{project}} --namespace {{namespace}} {{args}}
 
+# Convert a project's IFC model to GLB mesh format via IfcConvert
+convert-glb project:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    IFC_FILE="assets/{{project}}/output/ifc/plant.ifc"
+    if [ ! -f "$IFC_FILE" ]; then
+        IFC_FILE=$(ls assets/{{project}}/*.ifc | head -n 1)
+    fi
+    mkdir -p assets/{{project}}/output/glb
+    GLB_FILE="assets/{{project}}/output/glb/{{project}}.glb"
+    echo "== converting $IFC_FILE to $GLB_FILE via IfcConvert =="
+    bin/IfcConvert "$IFC_FILE" "$GLB_FILE" --use-world-coords --use-element-guids
+
 # Convert every project folder under assets/ (each subfolder = one independent project)
 convert-all *args:
     #!/usr/bin/env bash
@@ -28,6 +41,7 @@ convert-all *args:
         project="$(basename "$dir")"
         echo "== converting $project =="
         {{forge}} convert "assets/$project" --namespace {{namespace}} {{args}}
+        just convert-glb "$project"
     done
 
 # Shortcut: convert the HVAC catalog object (single file, fast)
@@ -35,6 +49,11 @@ convert-hvac *args: (convert "HVAC" args)
 
 # Shortcut: convert the digihub_building project (4 federated discipline files; DEXPI/AAS export take a few minutes)
 convert-digihub *args: (convert "digihub_building" args)
+
+# Start the Visualizer Uvicorn web server
+viz-up host="127.0.0.1" port="8000":
+    {{python}} -m uvicorn src.visualization.main:app --host {{host}} --port {{port}} --reload
+
 
 # Start the local BaSyx stack: aas-environment + registry + web UI (registry is mandatory, not opt-in)
 basyx-up:
@@ -52,7 +71,7 @@ basyx-down:
     docker compose -f infra/docker-compose.yml down
 
 # Upload every .aasx a project produced to BaSyx and register each with the registry (large projects batch into model-NNNN.aasx)
-basyx-upload project host="localhost" port="8081" registry_host="localhost" registry_port="8082": basyx-up
+basyx-upload project host="localhost" port="8081" registry_host="localhost" registry_port="8082": basyx-clear
     #!/usr/bin/env bash
     set -euo pipefail
     shopt -s nullglob
@@ -65,7 +84,7 @@ basyx-upload project host="localhost" port="8081" registry_host="localhost" regi
         echo "== uploading $f =="
         {{forge}} basyx upload --aasx-path "$f" \
             --host-aas-env {{host}} --port-aas-env {{port}} \
-            --host-registry {{registry_host}} --port-registry {{registry_port}}
+            --host-registry {{registry_host}} --port-registry {{registry_port}} || true
     done
 
 # Delete every shell/submodel and their registry descriptors from a running BaSyx stack
