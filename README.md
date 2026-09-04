@@ -51,17 +51,19 @@ captura de telemetria, ver `src/asset_forge/config.py`).
 just setup                  # cria o venv e instala o pacote
 just convert-hvac           # asset-forge convert assets/HVAC
 just convert-digihub        # asset-forge convert assets/digihub_building (mais lento: DEXPI+AAS ~3-4min)
+just convert-glb <projeto>  # converte o arquivo .ifc em malha .glb via IfcConvert (bin/IfcConvert)
 just convert-all            # converte todo projeto em assets/*
 just convert HVAC --no-aas  # `just convert <projeto> <args extras do CLI>`
 
-just basyx-up                                   # sobe aas-environment + registry + UI web (Docker)
-just basyx-upload HVAC                          # sobe o BaSyx (se preciso), envia todo .aasx em assets/HVAC/output/aas/ e registra no registry
-just basyx-clear                                # limpa shells/submodelos e seus descriptors no registry
-just basyx-down                                 # para e remove todos os containers (dados são in-memory)
+just basyx-up               # sobe aas-environment + registry + UI web (Docker)
+just basyx-upload HVAC      # limpa e envia todos os pacotes .aasx do projeto para o BaSyx
+just basyx-clear           # limpa shells/submodelos e seus descriptors no registry
+just basyx-down            # para e remove todos os containers Docker
 
-just test        # suíte completa
-just test-unit    # só unitários (rápidos)
-just clean         # remove assets/*/output
+just viz-up                 # inicia o servidor FastAPI/Uvicorn da SPA de visualização 3D (http://localhost:8000)
+
+just test                   # suíte completa
+just test-unit              # só unitários (rápidos)
 ```
 
 ### BaSyx local + UI
