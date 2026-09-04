@@ -73,9 +73,11 @@ Eclipse BaSyx `2.0.0-SNAPSHOT`/`latest`), a stack completa:
 
 | Serviço | URL |
 |---|---|
-| AAS Environment (repositório de shells/submodelos) | http://localhost:8081 |
-| AAS Registry (descriptors) | http://localhost:8082 |
+| AAS Environment (repositório de shells/submodelos) | **http://localhost:8081** |
+| AAS Registry (descriptors) | **http://localhost:8082** |
 | AAS Web UI | **http://localhost:3000** |
+| Visualizador Web | **http://localhost:8000** |
+
 
 O registry é **obrigatório**, não opt-in: `asset-forge basyx upload`/`clear`
 (e as receitas `just basyx-upload`/`basyx-clear`) sempre registram/limpam os
