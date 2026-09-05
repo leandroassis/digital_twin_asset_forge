@@ -1,11 +1,12 @@
 """`asset-forge` command-line interface.
 
     asset-forge convert <project_dir> [--output DIR] [--namespace URL]
-        [--dexpi/--no-dexpi] [--aas/--no-aas]
+        [--dexpi/--no-dexpi] [--aas/--no-aas] [--glb/--no-glb] [--databridge/--no-databridge]
         [--host-aas-env HOST] [--port-aas-env PORT]
         [--host-opcua HOST] [--port-opcua PORT]
     asset-forge basyx upload --aasx-path PATH [--host-aas-env ...] [--host-registry ...]
     asset-forge basyx clear [--host-aas-env ...] [--host-registry ...]
+    asset-forge mock-sensor run [--aasserver-path PATH] [--host-aas-env ...] [--interval SECONDS] [--once]
 
 `basyx upload`/`basyx clear` always target the registry too (defaults point
 at the local docker-compose registry) -- registering shell descriptors is
@@ -27,12 +28,15 @@ from asset_forge.exceptions import AssetForgeError, DexpiUnavailableError
 from asset_forge.export.aas.package import build_and_write_aasx
 from asset_forge.export.dexpi_builder import build_dexpi_model
 from asset_forge.export.dexpi_export import export_dexpi
+from asset_forge.export.glb import build_and_write_glb
 from asset_forge.export.ifc_writer import build_plant, write_plant
 from asset_forge.integration.basyx_client import BasyxClient
+from asset_forge.mock_sensor import app as mock_sensor_app
 
 app = typer.Typer(add_completion=False)
 basyx_app = typer.Typer(add_completion=False)
 app.add_typer(basyx_app, name="basyx")
+app.add_typer(mock_sensor_app, name="mock-sensor")
 
 
 @app.command()
@@ -42,6 +46,8 @@ def convert(
     namespace: str = typer.Option(config.DEFAULT_NAMESPACE, "--namespace", "-n"),
     dexpi: bool = typer.Option(True, "--dexpi/--no-dexpi"),
     aas: bool = typer.Option(True, "--aas/--no-aas"),
+    glb: bool = typer.Option(True, "--glb/--no-glb"),
+    databridge: bool = typer.Option(True, "--databridge/--no-databridge"),
     host_aas_env: str = typer.Option(config.AAS_ENV_HOST, "--host-aas-env"),
     port_aas_env: int = typer.Option(config.AAS_ENV_PORT, "--port-aas-env"),
     host_opcua: str = typer.Option(config.OPCUA_HOST, "--host-opcua"),
@@ -91,9 +97,16 @@ def convert(
             namespace=namespace,
             opcua_host=host_opcua,
             opcua_port=port_opcua,
+            databridge_dir=config.DATABRIDGE_DIR if databridge else None,
+            aas_env_host=host_aas_env,
+            aas_env_port=port_aas_env,
         )
         for aasx_path in aasx_paths:
             typer.echo(f"wrote {aasx_path}")
+
+    if glb:
+        glb_path = build_and_write_glb(model, output / "glb" / "plant.glb")
+        typer.echo(f"wrote {glb_path}")
 
 
 @basyx_app.command("upload")

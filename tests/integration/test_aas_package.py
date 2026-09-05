@@ -98,9 +98,13 @@ def test_globalids_differing_only_by_case_do_not_collide_as_opc_part_names(tmp_p
     import ifcopenshell
     import ifcopenshell.api.root
 
+    # Named as solar panels: only panel elements get the full TechnicalData
+    # treatment (incl. the embedded Model3DIFC geometry file this test is
+    # about) since export/aas/package.py's full/lean split, see
+    # export/aas/solar.py::is_solar_panel.
     ifc_model = ifcopenshell.file(schema="IFC4")
-    a = ifcopenshell.api.root.create_entity(ifc_model, ifc_class="IfcWall", name="A")
-    b = ifcopenshell.api.root.create_entity(ifc_model, ifc_class="IfcWall", name="B")
+    a = ifcopenshell.api.root.create_entity(ifc_model, ifc_class="IfcBuildingElementProxy", name="Solar Panel_Test:A")
+    b = ifcopenshell.api.root.create_entity(ifc_model, ifc_class="IfcBuildingElementProxy", name="Solar Panel_Test:B")
     a.GlobalId = "3A8hY1UoD7JhnLeZeDyUIv"
     b.GlobalId = "3A8hY1UoD7JhnLeZeDyUIV"
 
