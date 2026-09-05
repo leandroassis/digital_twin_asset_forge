@@ -283,48 +283,61 @@ class VisualizationBasyxService:
             logger.warning(f"Erro ao buscar submodel-elements de {submodel_id}: {exc}")
         return []
 
-    def get_metadata_for_element(self, global_id: str) -> Dict[str, Any]:
-        """Obtém metadados agregados (Nameplate, TechnicalData, OPC UA) para um elemento.
+    def get_submodel_tree_for_element(self, global_id: str) -> Dict[str, Any]:
+        """Returns every submodel attached to the element's shell, each as a
+        generic nested tree of its elements -- unlike the old hardcoded
+        nameplate/technicalData/opcua-only lookup, this doesn't special-case
+        or drop anything, so any submodel (including e.g. `timeseries`)
+        shows up automatically for the dashboard's tree view.
 
         :param global_id: Identificador global do ativo.
-        :return: Dicionário contendo Nameplate, TechnicalData e OPC UA extraídos do BaSyx.
+        :return: Dicionário {globalId, aasId, idShort, foundInBasyx, submodels}.
         """
         shell = self.get_shell_by_global_id(global_id)
         if not shell:
-            return {
-                "globalId": global_id,
-                "foundInBasyx": False,
-                "nameplate": {},
-                "technicalData": {},
-                "opcua": {}
-            }
+            return {"globalId": global_id, "foundInBasyx": False, "submodels": []}
 
-        submodels_refs = shell.get("submodels", []) or shell.get("submodelDescriptors", [])
-        result_metadata = {
-            "globalId": global_id,
-            "aasId": shell.get("id"),
-            "idShort": shell.get("idShort"),
-            "foundInBasyx": True,
-            "nameplate": {},
-            "technicalData": {},
-            "opcua": {}
-        }
-
-        for sm_ref in submodels_refs:
+        submodels = []
+        for sm_ref in shell.get("submodels", []) or shell.get("submodelDescriptors", []):
             keys = sm_ref.get("keys", [])
             sm_id = keys[0].get("value") if keys else sm_ref.get("id")
             if not sm_id:
                 continue
 
-            elements = self.get_submodel_elements(sm_id)
-            if "nameplate" in sm_id.lower():
-                result_metadata["nameplate"] = self._parse_submodel_elements(elements)
-            elif "technicaldata" in sm_id.lower():
-                result_metadata["technicalData"] = self._parse_submodel_elements(elements)
-            elif "opcua" in sm_id.lower():
-                result_metadata["opcua"] = self._parse_submodel_elements(elements)
+            # asset-forge's own shells always id submodels as ".../sm/{idShort}"
+            # (see export/aas/shell.py::build_shell) -- recover the real
+            # idShort from that rather than guessing from a substring.
+            id_short = sm_id.rsplit("/sm/", 1)[-1] if "/sm/" in sm_id else sm_id
+            submodels.append(
+                {
+                    "idShort": id_short,
+                    "id": sm_id,
+                    "children": self._build_element_tree(self.get_submodel_elements(sm_id)),
+                }
+            )
 
-        return result_metadata
+        return {
+            "globalId": global_id,
+            "aasId": shell.get("id"),
+            "idShort": shell.get("idShort"),
+            "foundInBasyx": True,
+            "submodels": submodels,
+        }
+
+    def _build_element_tree(self, elements: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Recursively converts BaSyx's submodel-element JSON into a plain
+        {idShort, modelType, value | children} tree, preserving nesting
+        (unlike `_parse_submodel_elements`, which flattens into a dict)."""
+        nodes = []
+        for index, elem in enumerate(elements):
+            model_type = elem.get("modelType")
+            id_short = elem.get("idShort") or f"[{index}]"
+            value = elem.get("value")
+            if model_type in ("SubmodelElementCollection", "SubmodelElementList") and isinstance(value, list):
+                nodes.append({"idShort": id_short, "modelType": model_type, "children": self._build_element_tree(value)})
+            else:
+                nodes.append({"idShort": id_short, "modelType": model_type, "value": value})
+        return nodes
 
     def _find_submodel_id(self, shell: Dict[str, Any], id_short_substring: str) -> Optional[str]:
         """Finds the id of the first submodel reference on `shell` whose id

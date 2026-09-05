@@ -49,46 +49,66 @@ export class DashboardComponent {
             return;
         }
 
-        let html = '';
+        const submodels = metadata.submodels || [];
+        this.metadataContent.innerHTML = '';
 
-        // Submodelo Nameplate
-        if (metadata.nameplate && Object.keys(metadata.nameplate).length > 0) {
-            html += `<div class="metadata-group">
-                <h4>🏷️ Nameplate (IDTA v3.0)</h4>`;
-            for (const [k, v] of Object.entries(metadata.nameplate)) {
-                html += `<div class="meta-row"><span class="meta-key">${k}</span><span class="meta-val">${v}</span></div>`;
-            }
-            html += `</div>`;
+        if (submodels.length === 0) {
+            this.metadataContent.innerHTML = `<div class="empty-state">Sem submodelos adicionais</div>`;
+            return;
         }
 
-        // Submodelo TechnicalData (Psets)
-        if (metadata.technicalData && Object.keys(metadata.technicalData).length > 0) {
-            html += `<div class="metadata-group">
-                <h4>⚙️ TechnicalData (Psets IFC)</h4>`;
-            for (const [psetName, psetVal] of Object.entries(metadata.technicalData)) {
-                if (typeof psetVal === 'object' && psetVal !== null) {
-                    html += `<div style="font-weight:600; color:var(--accent-cyan); margin:6px 0 2px 0;">${psetName}</div>`;
-                    for (const [propKey, propVal] of Object.entries(psetVal)) {
-                        html += `<div class="meta-row"><span class="meta-key">${propKey}</span><span class="meta-val">${propVal}</span></div>`;
-                    }
-                } else {
-                    html += `<div class="meta-row"><span class="meta-key">${psetName}</span><span class="meta-val">${psetVal}</span></div>`;
-                }
-            }
-            html += `</div>`;
+        // Every submodel attached to this element's shell, reconstructed as
+        // a tree straight from BaSyx -- nothing hardcoded/dropped, so any
+        // submodel (nameplate, technicaldata, opcua, timeseries, or a
+        // future one) shows up automatically.
+        for (const submodel of submodels) {
+            const group = document.createElement('div');
+            group.className = 'metadata-group';
+
+            const title = document.createElement('h4');
+            title.textContent = `${this._submodelIcon(submodel.idShort)} ${submodel.idShort}`;
+            group.appendChild(title);
+
+            (submodel.children || []).forEach(node => group.appendChild(this._renderTreeNode(node)));
+
+            this.metadataContent.appendChild(group);
+        }
+    }
+
+    _submodelIcon(idShort) {
+        const icons = { nameplate: '🏷️', technicaldata: '⚙️', opcua: '📡', timeseries: '📈' };
+        return icons[(idShort || '').toLowerCase()] || '📄';
+    }
+
+    _renderTreeNode(node) {
+        const el = document.createElement('div');
+        el.className = 'tree-node';
+        const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+
+        if (hasChildren) {
+            const label = document.createElement('div');
+            label.className = 'tree-node-label';
+            label.innerHTML = `<span>📁</span> <span>${node.idShort}</span>`;
+
+            const childrenDiv = document.createElement('div');
+            childrenDiv.className = 'tree-children';
+            node.children.forEach(child => childrenDiv.appendChild(this._renderTreeNode(child)));
+
+            label.addEventListener('click', () => {
+                childrenDiv.style.display = childrenDiv.style.display === 'none' ? 'block' : 'none';
+            });
+
+            el.appendChild(label);
+            el.appendChild(childrenDiv);
+        } else {
+            const row = document.createElement('div');
+            row.className = 'meta-row';
+            const valueText = (node.value === null || node.value === undefined) ? '—' : String(node.value);
+            row.innerHTML = `<span class="meta-key">${node.idShort}</span><span class="meta-val">${valueText}</span>`;
+            el.appendChild(row);
         }
 
-        // Submodelo OPC UA
-        if (metadata.opcua && Object.keys(metadata.opcua).length > 0) {
-            html += `<div class="metadata-group">
-                <h4>📡 OPC UA Server Datasheet</h4>`;
-            for (const [k, v] of Object.entries(metadata.opcua)) {
-                html += `<div class="meta-row"><span class="meta-key">${k}</span><span class="meta-val">${v}</span></div>`;
-            }
-            html += `</div>`;
-        }
-
-        this.metadataContent.innerHTML = html || `<div class="empty-state">Sem submodelos adicionais</div>`;
+        return el;
     }
 
     renderTelemetry(telemetryData) {

@@ -41,6 +41,7 @@ export class Viewer3D {
         this.originalMaterialsMap = new Map();
         this.meshByGlobalIdMap = new Map();
         this.alertStatesMap = new Map();
+        this._cameraTransition = null;
 
         this._initScene();
         this._initRaycaster();
@@ -221,15 +222,43 @@ export class Viewer3D {
         const box = new THREE.Box3().setFromObject(mesh);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y, size.z);
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
 
         const targetPos = new THREE.Vector3()
             .copy(center)
             .add(new THREE.Vector3(maxDim * 2.5, maxDim * 2.5, maxDim * 2.5));
 
-        this.controls.target.copy(center);
-        this.camera.position.copy(targetPos);
-        this.controls.update();
+        this._startCameraTransition(targetPos, center);
+    }
+
+    _startCameraTransition(targetPosition, targetLookAt, duration = 900) {
+        this._cameraTransition = {
+            startPos: this.camera.position.clone(),
+            endPos: targetPosition.clone(),
+            startTarget: this.controls.target.clone(),
+            endTarget: targetLookAt.clone(),
+            startTime: performance.now(),
+            duration
+        };
+    }
+
+    _updateCameraTransition() {
+        const t = this._cameraTransition;
+        if (!t) return;
+
+        const progress = Math.min((performance.now() - t.startTime) / t.duration, 1);
+        const eased = this._easeInOutCubic(progress);
+
+        this.camera.position.lerpVectors(t.startPos, t.endPos, eased);
+        this.controls.target.lerpVectors(t.startTarget, t.endTarget, eased);
+
+        if (progress >= 1) {
+            this._cameraTransition = null;
+        }
+    }
+
+    _easeInOutCubic(t) {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     }
 
     resetCamera() {
@@ -254,6 +283,7 @@ export class Viewer3D {
 
     _animate() {
         requestAnimationFrame(() => this._animate());
+        this._updateCameraTransition();
         this.controls.update();
         this.renderer.render(this.scene, this.camera);
     }

@@ -107,15 +107,16 @@ def get_basyx_shells():
 
 @app.get("/api/basyx/metadata/{global_id:path}")
 def get_basyx_metadata(global_id: str):
-    """Obtém os metadados AAS (Nameplate, TechnicalData, OPC UA) para um elemento.
+    """Obtém todos os submodelos AAS do elemento, cada um como uma árvore
+    genérica de seus elementos (Nameplate, TechnicalData, OPC UA,
+    TimeSeries, e qualquer outro presente -- nada é descartado).
 
     Aceita parâmetros de caminho completos (URLs/URIs com barras ou Express IDs).
 
     :param global_id: Identificador global ou Express ID do ativo.
-    :return: Dicionário com metadados Nameplate, TechnicalData e OPC UA.
+    :return: Dicionário {globalId, aasId, idShort, foundInBasyx, submodels}.
     """
-    metadata = basyx_service.get_metadata_for_element(global_id)
-    return metadata
+    return basyx_service.get_submodel_tree_for_element(global_id)
 
 @app.get("/api/telemetry/{global_id:path}")
 def get_element_telemetry(global_id: str, count: Optional[int] = Query(None, ge=1)):
