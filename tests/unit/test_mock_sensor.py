@@ -1,6 +1,6 @@
 import json
 
-from asset_forge.mock_sensor import SensorTarget, _derive_asset_tag, load_targets
+from mock_data.mock_sensor import SensorTarget, _derive_asset_tag, load_targets
 
 
 def test_load_targets_parses_aasserver_json_sinks(tmp_path):

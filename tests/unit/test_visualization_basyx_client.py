@@ -66,3 +66,79 @@ def test_get_shell_by_global_id_uuid_conversion():
         assert shell is not None
         assert shell["idShort"] == "HVAC-AS-AHU-B05_906281"
 
+
+def test_get_telemetry_for_element_follows_linked_segment_to_history_api():
+    service = VisualizationBasyxService()
+
+    shells_response = MagicMock(status_code=200)
+    shells_response.json.return_value = {
+        "result": [
+            {
+                "id": "https://example.org/asset-forge/aas/ifc/PANEL123",
+                "idShort": "SolarPanel_1",
+                "assetInformation": {"globalAssetId": "https://example.org/asset-forge/asset/ifc/PANEL123"},
+                "submodels": [{"keys": [{"type": "Submodel", "value": "sm-timeseries-panel123"}]}],
+            }
+        ]
+    }
+
+    elements_response = MagicMock(status_code=200)
+    elements_response.json.return_value = {
+        "result": [
+            {
+                "idShort": "Segments",
+                "modelType": "SubmodelElementCollection",
+                "value": [
+                    {
+                        "idShort": "LinkedSegment",
+                        "modelType": "SubmodelElementCollection",
+                        "value": [
+                            {"idShort": "Endpoint", "modelType": "Property", "value": "http://localhost:8090"},
+                            {"idShort": "Query", "modelType": "Property", "value": "PANEL-123"},
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    series_response = MagicMock(status_code=200)
+    series_response.json.return_value = {
+        "CurrentDC": [{"time": "2026-01-01T00:00:00+00:00", "value": 9.1}],
+        "VoltageDC": [{"time": "2026-01-01T00:00:00+00:00", "value": 38.2}],
+    }
+
+    def fake_get(url, *args, **kwargs):
+        if url.endswith("/shells?limit=15000"):
+            return shells_response
+        if "/submodel-elements" in url:
+            return elements_response
+        if url == "http://localhost:8090/series/PANEL-123":
+            return series_response
+        raise AssertionError(f"unexpected URL {url}")
+
+    with patch.object(service._session, "get", side_effect=fake_get):
+        telemetry = service.get_telemetry_for_element("PANEL123")
+
+    assert telemetry["foundInBasyx"] is True
+    assert telemetry["type"] == "SolarPanel"
+    assert telemetry["metrics"] == {"currentDC": [9.1], "voltageDC": [38.2]}
+    assert telemetry["timestamps"] == ["2026-01-01T00:00:00+00:00"]
+
+
+def test_get_telemetry_for_element_returns_empty_shape_when_shell_not_found():
+    service = VisualizationBasyxService()
+    mock_response = MagicMock(status_code=200)
+    mock_response.json.return_value = {"result": []}
+
+    with patch.object(service._session, "get", return_value=mock_response):
+        telemetry = service.get_telemetry_for_element("does-not-exist")
+
+    assert telemetry == {
+        "globalId": "does-not-exist",
+        "type": "Unknown",
+        "metrics": {},
+        "timestamps": [],
+        "foundInBasyx": False,
+    }
+

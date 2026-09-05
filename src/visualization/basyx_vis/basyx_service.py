@@ -23,6 +23,19 @@ from config import BASYX_AAS_ENV_HOST, BASYX_REGISTRY_HOST, ASSETS_DIR
 
 logger = logging.getLogger(__name__)
 
+# opcua/timeseries Property id_shorts (see asset_forge/export/aas/solar.py)
+# -> the metric keys dashboard.js's titleMap already renders.
+_METRIC_KEY_MAP = {
+    "LightIntensity": "luminosity",
+    "Temperature": "temperature",
+    "CurrentDC": "currentDC",
+    "VoltageDC": "voltageDC",
+    "VoltageAC": "voltageAC",
+    "CurrentAC": "currentAC",
+    "PowerAC": "powerAC",
+}
+_INVERTER_ONLY_ID_SHORTS = {"VoltageAC", "CurrentAC", "PowerAC"}
+
 def b64url(value: str) -> str:
     """Codifica uma string URI em formato base64url sem padding '='.
 
@@ -312,6 +325,75 @@ class VisualizationBasyxService:
                 result_metadata["opcua"] = self._parse_submodel_elements(elements)
 
         return result_metadata
+
+    def _find_submodel_id(self, shell: Dict[str, Any], id_short_substring: str) -> Optional[str]:
+        """Finds the id of the first submodel reference on `shell` whose id
+        contains `id_short_substring` (e.g. "timeseries", "opcua")."""
+        for sm_ref in shell.get("submodels", []) or shell.get("submodelDescriptors", []):
+            keys = sm_ref.get("keys", [])
+            sm_id = keys[0].get("value") if keys else sm_ref.get("id")
+            if sm_id and id_short_substring in sm_id.lower():
+                return sm_id
+        return None
+
+    def get_telemetry_for_element(self, global_id: str, count: Optional[int] = None) -> Dict[str, Any]:
+        """Fetches real historized telemetry for an asset by following its
+        `timeseries` submodel's `Segments.LinkedSegment` to the history-api
+        service (see export/aas/submodels.py::build_timeseries_submodel and
+        history_api.py) -- never simulated/random data.
+
+        :param global_id: Identificador do elemento selecionado.
+        :param count: Limite opcional de últimos N registros por métrica.
+        :return: Dicionário {globalId, type, metrics, timestamps, foundInBasyx}.
+        """
+        empty: Dict[str, Any] = {
+            "globalId": global_id,
+            "type": "Unknown",
+            "metrics": {},
+            "timestamps": [],
+            "foundInBasyx": False,
+        }
+
+        shell = self.get_shell_by_global_id(global_id)
+        if not shell:
+            return empty
+
+        sm_id = self._find_submodel_id(shell, "timeseries")
+        if not sm_id:
+            return {**empty, "foundInBasyx": True}
+
+        parsed = self._parse_submodel_elements(self.get_submodel_elements(sm_id))
+        linked = (parsed.get("Segments") or {}).get("LinkedSegment") or {}
+        endpoint = linked.get("Endpoint")
+        query = linked.get("Query")
+        if not endpoint or not query:
+            return {**empty, "foundInBasyx": True}
+
+        try:
+            params = {"count": count} if count else {}
+            res = self._session.get(f"{endpoint.rstrip('/')}/series/{query}", params=params, timeout=5)
+            res.raise_for_status()
+            series = res.json()
+        except Exception as exc:
+            logger.warning(f"Erro ao consultar history-api ({endpoint}) para '{query}': {exc}")
+            return {**empty, "foundInBasyx": True}
+
+        metrics: Dict[str, List[float]] = {}
+        timestamps: List[str] = []
+        for id_short, points in series.items():
+            metrics[_METRIC_KEY_MAP.get(id_short, id_short)] = [p.get("value") for p in points]
+            if not timestamps and points:
+                timestamps = [p.get("time") for p in points]
+
+        return {
+            "globalId": global_id,
+            "aasId": shell.get("id"),
+            "idShort": shell.get("idShort"),
+            "foundInBasyx": True,
+            "type": "Inverter" if _INVERTER_ONLY_ID_SHORTS & series.keys() else "SolarPanel",
+            "metrics": metrics,
+            "timestamps": timestamps,
+        }
 
     def _parse_submodel_elements(self, elements: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Converte a estrutura genérica de elementos do BaSyx em dicionário {idShort: valor}.

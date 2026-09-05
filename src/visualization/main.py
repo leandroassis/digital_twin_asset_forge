@@ -65,13 +65,24 @@ def list_models():
     projects = []
     if ASSETS_DIR.exists():
         for proj_dir in ASSETS_DIR.iterdir():
-            if proj_dir.is_dir():
-                glb_file = proj_dir / "output" / "glb" / f"{proj_dir.name}.glb"
-                projects.append({
-                    "name": proj_dir.name,
-                    "hasGlb": glb_file.exists(),
-                    "glbUrl": f"/assets/{proj_dir.name}/output/glb/{proj_dir.name}.glb" if glb_file.exists() else None
-                })
+            if not proj_dir.is_dir():
+                continue
+            glb_dir = proj_dir / "output" / "glb"
+            # "plant.glb" is asset-forge's own whole-plant export (fixed
+            # name, one file regardless of project -- see export/glb.py);
+            # "<project>.glb" is the legacy IfcConvert-based recipe
+            # (pipeline/converter.py / `just convert-glb`), kept as a
+            # fallback for projects still using that path.
+            glb_file = glb_dir / "plant.glb"
+            glb_name = "plant.glb"
+            if not glb_file.exists():
+                glb_file = glb_dir / f"{proj_dir.name}.glb"
+                glb_name = f"{proj_dir.name}.glb"
+            projects.append({
+                "name": proj_dir.name,
+                "hasGlb": glb_file.exists(),
+                "glbUrl": f"/assets/{proj_dir.name}/output/glb/{glb_name}" if glb_file.exists() else None
+            })
     return {"projects": projects}
 
 @app.get("/api/tree")
@@ -107,47 +118,18 @@ def get_basyx_metadata(global_id: str):
     return metadata
 
 @app.get("/api/telemetry/{global_id:path}")
-def get_element_telemetry(global_id: str):
-    """Retorna séries temporais de telemetria simuladas (ou OPC UA) para o elemento selecionado.
+def get_element_telemetry(global_id: str, count: Optional[int] = Query(None, ge=1)):
+    """Retorna séries temporais de telemetria reais para o elemento selecionado.
 
-    Gera métricas específicas como Tensão CC/CA, Corrente CC/CA, Temperatura e Luminosidade.
+    Lê o submodelo `timeseries` do ativo no BaSyx para localizar seu
+    `LinkedSegment` (endpoint + query do serviço history-api) e busca as
+    séries reais historizadas no InfluxDB através dele.
 
     :param global_id: Identificador do elemento selecionado.
+    :param count: Limite opcional de registros mais recentes por métrica.
     :return: Dicionário contendo o tipo de ativo, métricas e timestamps.
     """
-    import random
-    from datetime import datetime, timedelta
-
-    now = datetime.now()
-    timestamps = [(now - timedelta(minutes=i*5)).isoformat() for i in range(12)][::-1]
-
-    is_inverter = "inverter" in global_id.lower() or "inv" in global_id.lower()
-
-    if is_inverter:
-        data = {
-            "type": "Inverter",
-            "globalId": global_id,
-            "metrics": {
-                "voltageAC": [round(220 + random.uniform(-5, 5), 2) for _ in timestamps],
-                "currentAC": [round(45 + random.uniform(-3, 3), 2) for _ in timestamps],
-                "powerAC": [round(9.9 + random.uniform(-0.5, 0.5), 2) for _ in timestamps]
-            },
-            "timestamps": timestamps
-        }
-    else:
-        data = {
-            "type": "SolarPanel",
-            "globalId": global_id,
-            "metrics": {
-                "luminosity": [round(850 + random.uniform(-50, 50), 1) for _ in timestamps],
-                "temperature": [round(42 + random.uniform(-2, 3), 1) for _ in timestamps],
-                "currentDC": [round(9.2 + random.uniform(-0.4, 0.4), 2) for _ in timestamps],
-                "voltageDC": [round(38.5 + random.uniform(-1, 1), 2) for _ in timestamps]
-            },
-            "timestamps": timestamps
-        }
-
-    return data
+    return basyx_service.get_telemetry_for_element(global_id, count=count)
 
 @app.get("/api/alerts")
 def get_active_alerts():

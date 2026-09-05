@@ -31,7 +31,7 @@ from asset_forge.export.dexpi_export import export_dexpi
 from asset_forge.export.glb import build_and_write_glb
 from asset_forge.export.ifc_writer import build_plant, write_plant
 from asset_forge.integration.basyx_client import BasyxClient
-from asset_forge.mock_sensor import app as mock_sensor_app
+from mock_data.mock_sensor import app as mock_sensor_app
 
 app = typer.Typer(add_completion=False)
 basyx_app = typer.Typer(add_completion=False)

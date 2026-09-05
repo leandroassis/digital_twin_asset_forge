@@ -39,7 +39,7 @@ src/visualization/
 | `GET` | `/api/tree` | Retorna a Árvore de Ativos hierárquica construída 100% via API do BaSyx. |
 | `GET` | `/api/basyx/shells` | Retorna a lista de todas as Shells cadastradas no BaSyx. |
 | `GET` | `/api/basyx/metadata/{global_id:path}` | Obtém Nameplate, TechnicalData (Psets) e OPC UA para o ativo selecionado. |
-| `GET` | `/api/telemetry/{global_id:path}` | Retorna dados de telemetria em séries temporais (tensões, correntes, temperatura). |
+| `GET` | `/api/telemetry/{global_id:path}` | Retorna séries temporais reais (via submodelo `timeseries` -> history-api/InfluxDB) para o ativo. |
 | `GET` | `/api/alerts` | Retorna a lista de alertas de anomalia ativos. |
 | `POST` | `/api/alerts` | Registra/atualiza um novo alerta de anomalia. |
 | `DELETE` | `/api/alerts/{element_id:path}` | Remove um alerta ativo pelo ID do elemento. |
