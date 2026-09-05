@@ -32,11 +32,13 @@ from asset_forge.export.glb import build_and_write_glb
 from asset_forge.export.ifc_writer import build_plant, write_plant
 from asset_forge.integration.basyx_client import BasyxClient
 from mock_data.mock_sensor import app as mock_sensor_app
+from model.cli import app as model_app
 
 app = typer.Typer(add_completion=False)
 basyx_app = typer.Typer(add_completion=False)
 app.add_typer(basyx_app, name="basyx")
 app.add_typer(mock_sensor_app, name="mock-sensor")
+app.add_typer(model_app, name="model")
 
 
 @app.command()
