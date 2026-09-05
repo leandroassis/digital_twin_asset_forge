@@ -41,3 +41,34 @@ def build_shell(
         shell.submodel.add(model.ModelReference.from_referable(submodel))
 
     return shell, submodels
+
+
+def build_virtual_shell(
+    id_short: str,
+    name: str,
+    namespace: str,
+    submodels: List[model.Submodel],
+) -> Tuple[model.AssetAdministrationShell, List[model.Submodel]]:
+    """Build one AAS Shell for a synthetic asset with no backing IFC
+    GlobalId (e.g. a plant's inverter, which has no corresponding IfcElement
+    -- see export/aas/submodels.py::build_virtual_nameplate_submodel).
+
+    Mirrors `build_shell`'s id scheme exactly, substituting an `ifc/{id}`
+    path segment for `virtual/{id_short}`, so IFC-backed and synthetic
+    shells are distinguishable purely by that path segment."""
+    for submodel in submodels:
+        submodel.id = f"https://{namespace}/aas/virtual/{id_short}/sm/{submodel.id_short}"
+
+    asset_information = model.AssetInformation(
+        asset_kind=model.AssetKind.INSTANCE,
+        global_asset_id=f"https://{namespace}/asset/virtual/{id_short}",
+    )
+    shell = model.AssetAdministrationShell(
+        asset_information=asset_information,
+        id_=f"https://{namespace}/aas/virtual/{id_short}",
+        id_short=valid_id_short(name),
+    )
+    for submodel in submodels:
+        shell.submodel.add(model.ModelReference.from_referable(submodel))
+
+    return shell, submodels

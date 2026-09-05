@@ -30,11 +30,8 @@ convert-all *args:
         {{forge}} convert "assets/$project" --namespace {{namespace}} {{args}}
     done
 
-# Shortcut: convert the HVAC catalog object (single file, fast)
-convert-hvac *args: (convert "HVAC" args)
-
-# Shortcut: convert the digihub_building project (4 federated discipline files; DEXPI/AAS export take a few minutes)
-convert-digihub *args: (convert "digihub_building" args)
+# Shortcut: convert the solar-plant project
+convert-solar *args: (convert "solar-plant" args)
 
 # Start the local BaSyx stack: aas-environment + registry + web UI (registry is mandatory, not opt-in)
 basyx-up:
@@ -73,6 +70,10 @@ basyx-clear host="localhost" port="8081" registry_host="localhost" registry_port
     {{forge}} basyx clear \
         --host-aas-env {{host}} --port-aas-env {{port}} \
         --host-registry {{registry_host}} --port-registry {{registry_port}}
+
+# Dummy sensor mock: writes+reads-back synthetic values into every opcua submodel Property (see mock_sensor.py). Add --once for a single round instead of looping.
+mock-sensor *args:
+    {{forge}} mock-sensor run {{args}}
 
 # Run the full test suite (unit + integration; integration runs against the real assets/ files)
 test:

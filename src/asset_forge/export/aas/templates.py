@@ -48,6 +48,11 @@ TEMPLATE_URLS: Dict[str, str] = {
         "refs/heads/main/published/OPC%20UA%20Server%20Datasheet/1/0/"
         "IDTA%2002009-1-0-Template-OPCUA-Server%20Datasheet.json"
     ),
+    "timeseries": (
+        "https://raw.githubusercontent.com/admin-shell-io/submodel-templates/"
+        "refs/heads/main/published/Time%20Series%20Data/1/1/1/"
+        "IDTA%2002008-1-1-1_Template_TimeSeriesData_forAASMetamodelV3.1.json"
+    ),
 }
 
 

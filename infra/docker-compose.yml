@@ -57,3 +57,73 @@ services:
       - aas-environment
       - aas-registry
     restart: unless-stopped
+
+  # Bridges an external OPC UA server's sensor writes into this plant's AAS
+  # `opcua` submodels -- config-only (see infra/databridge/*.json, generated
+  # by `asset-forge convert`'s --databridge flag / export/aas/databridge.py),
+  # no code of its own. The OPC UA server itself (the mock sensor service)
+  # is out of scope for this repo; OPCUA_HOST/OPCUA_PORT below just need to
+  # point at wherever it ends up running.
+  databridge:
+    image: eclipsebasyx/databridge:1.0.0-SNAPSHOT
+    container_name: asset-forge-databridge
+    ports:
+      - "${DATABRIDGE_PORT:-8085}:8085"
+    volumes:
+      - ./databridge:/usr/share/config
+    depends_on:
+      - aas-environment
+    restart: unless-stopped
+
+  # Real historized storage for sensor readings -- the `timeseries`
+  # submodel's LinkedSegment.Query (see export/aas/submodels.py) points
+  # Flux queries here. Deliberately separate from BaSyx itself: BaSyx's own
+  # aas-environment only ever holds the *current* value of a Property (see
+  # its module docstring in submodels.py) regardless of backend, never a
+  # history -- this is the actual retention layer. A named volume is
+  # required (not optional) here, unlike the other services: the whole
+  # point of adding this was to survive restarts, so data loss on
+  # `docker compose down` would defeat the purpose.
+  influxdb:
+    image: influxdb:2.7
+    container_name: asset-forge-influxdb
+    ports:
+      - "${INFLUXDB_PORT:-8086}:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=asset-forge
+      - DOCKER_INFLUXDB_INIT_PASSWORD=asset-forge-dev
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG:-asset-forge}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET:-sensors}
+      # Fixed (not auto-generated) so config.py's own default matches it
+      # without needing to fetch/extract a generated token -- local dev
+      # stack only, not a secret worth protecting here.
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN:-asset-forge-dev-token}
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    restart: unless-stopped
+
+  # Intermediary in front of InfluxDB (see history_api.py): the `timeseries`
+  # submodel's LinkedSegment.Query only ever holds a plain asset id, never a
+  # raw Flux string -- a consumer calls this service's own small HTTP API
+  # with that id instead. Build context is the repo root (not this
+  # directory) so its Dockerfile can copy src/asset_forge/{config,history_api}.py.
+  history-api:
+    build:
+      context: ..
+      dockerfile: infra/history-api/Dockerfile
+    container_name: asset-forge-history-api
+    ports:
+      - "${HISTORY_API_PORT:-8090}:8090"
+    environment:
+      - INFLUXDB_HOST=influxdb
+      - INFLUXDB_PORT=8086
+      - INFLUXDB_ORG=${INFLUXDB_ORG:-asset-forge}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-sensors}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:-asset-forge-dev-token}
+    depends_on:
+      - influxdb
+    restart: unless-stopped
+
+volumes:
+  influxdb-data:
