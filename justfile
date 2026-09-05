@@ -94,6 +94,10 @@ basyx-clear host="localhost" port="8081" registry_host="localhost" registry_port
 mock-sensor *args:
     {{forge}} mock-sensor run {{args}}
 
+# Run the Z-Score AI Anomaly Detection model against InfluxDB and sync alerts with the 3D visualizer
+run-ai *args:
+    {{forge}} model run {{args}}
+
 # Run the full test suite (unit + integration; integration runs against the real assets/ files)
 test:
     {{pytest}} tests/ -q
