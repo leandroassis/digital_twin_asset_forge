@@ -52,11 +52,6 @@ viz-up host="127.0.0.1" port="8000":
     {{python}} -m uvicorn src.visualization.main:app --host {{host}} --port {{port}} --reload
 
 
-# Start the Visualizer Uvicorn web server
-viz-up host="127.0.0.1" port="8000":
-    {{python}} -m uvicorn src.visualization.main:app --host {{host}} --port {{port}} --reload
-
-
 # Start the local BaSyx stack: aas-environment + registry + web UI (registry is mandatory, not opt-in)
 basyx-up:
     docker compose -f infra/docker-compose.yml up -d
