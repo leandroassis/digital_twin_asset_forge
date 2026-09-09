@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import time
 import numpy as np
+import modelPV
 
 data = np.load("a621_2026_irradiancia_temperatura.npy") # dataset preparado pelo Eraldo
 INITIAL_DATETIME = datetime(2026, 1, 1, 0, 0)
@@ -71,16 +72,20 @@ def run_simulation() -> None:
 		while True:
 			loop_start = time.monotonic()
 			try:
-				linha = interpolate_data(current_datetime)
+				irradiance, ambient_temperature = interpolate_data(current_datetime)
+				voltage, current, power, cell_temperature, irradiance = modelPV.maximum_power_point(irradiance=irradiance, ambient_temperature=ambient_temperature)
 			except IndexError:
 				print("fim do dataset; simulacao encerrada")
 				break
 
 			print(
 				f"simulado = {current_datetime:%d/%m/%Y %H:%M:%S} | "
-				f"sistema = {datetime.now():%d/%m/%Y %H:%M:%S} | "
-				f"irradiancia = {linha[0]:.2f} W/m2 | "
-				f"temperatura = {linha[1]:.2f} °C",
+				f"irradiancia = {irradiance:.2f} W/m2 | "
+				f"ambiente = {ambient_temperature:.2f} °C | "
+				f"celula = {cell_temperature:.2f} °C | "
+				f"tensao = {voltage:.2f} V | "
+				f"corrente = {current:.2f} A | "
+				f"potencia = {power:.2f} W\n\n",
 				flush=True,
 			)
 
