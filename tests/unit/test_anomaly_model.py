@@ -257,9 +257,12 @@ def test_load_tag_to_global_id_map(tmp_path):
     assert tag_map.get("PANEL-1529520") == "2QF3$F$XHF1A$PuubJ8dJ8"
 
 
+@patch("requests.get")
 @patch("requests.post")
 @patch("requests.delete")
-def test_alert_notifier_sync(mock_delete, mock_post):
+def test_alert_notifier_sync(mock_delete, mock_post, mock_get):
+    mock_get.return_value.status_code = 200
+    mock_get.return_value.json.return_value = {"alerts": []}
     mock_post.return_value.status_code = 200
     mock_delete.return_value.status_code = 200
 
@@ -277,3 +280,81 @@ def test_alert_notifier_sync(mock_delete, mock_post):
     assert res2["cleared"] == 1
     assert res2["active"] == 0
     assert mock_delete.called
+
+
+@patch("requests.get")
+@patch("requests.delete")
+def test_alert_notifier_reconciles_preexisting_alerts(mock_delete, mock_get):
+    # Simulates visualizer already having an active alert from an earlier run
+    mock_get.return_value.status_code = 200
+    mock_get.return_value.json.return_value = {
+        "alerts": [{"element_id": "PANEL_OLD", "error_type": "Sobreaquecimento"}]
+    }
+    mock_delete.return_value.status_code = 200
+
+    notifier = AlertNotifier("http://localhost:8000")
+    assert "PANEL_OLD" in notifier._last_alerted_elements
+
+    # Evaluating with empty list (or healthy panels) must trigger DELETE for PANEL_OLD
+    res = notifier.sync_alerts([])
+    assert res["cleared"] == 1
+    assert mock_delete.called
+    assert "PANEL_OLD" in mock_delete.call_args[0][0]
+
+
+def test_anomaly_thresholds_from_dict():
+    # Flat dictionary
+    t1 = AnomalyThresholds.from_dict({"z_score_dirt": -1.8, "max_safe_temperature_c": 72.0})
+    assert t1.z_score_dirt == -1.8
+    assert t1.max_safe_temperature_c == 72.0
+    assert t1.night_lux_threshold == 50.0  # default preserved
+
+    # Nested dictionary matching config/rules.json structure
+    nested = {
+        "night_detection": {"night_lux_threshold": 60.0},
+        "statistical_z_scores": {"z_score_dirt": -3.2, "z_score_overheat": 2.8},
+        "safety_limits": {"max_safe_temperature_c": 75.0, "max_safe_current_a": 18.0},
+        "ignored_key": "some_extra_info",
+    }
+    t2 = AnomalyThresholds.from_dict(nested)
+    assert t2.night_lux_threshold == 60.0
+    assert t2.z_score_dirt == -3.2
+    assert t2.z_score_overheat == 2.8
+    assert t2.max_safe_temperature_c == 75.0
+    assert t2.max_safe_current_a == 18.0
+
+
+def test_anomaly_thresholds_from_file(tmp_path):
+    config_file = tmp_path / "custom_rules.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "statistical_z_scores": {"z_score_dirt": -2.2, "z_score_overheat": 2.1},
+                "safety_limits": {"max_safe_temperature_c": 68.0},
+            }
+        )
+    )
+
+    thresholds = AnomalyThresholds.from_file(config_file)
+    assert thresholds.z_score_dirt == -2.2
+    assert thresholds.z_score_overheat == 2.1
+    assert thresholds.max_safe_temperature_c == 68.0
+
+    # Non-existent file returns default instance safely
+    missing_thresholds = AnomalyThresholds.from_file(tmp_path / "does_not_exist.json")
+    assert missing_thresholds.z_score_dirt == -2.5
+    assert missing_thresholds.max_safe_temperature_c == 65.0
+
+
+def test_project_default_rules_json_exists():
+    from pathlib import Path
+
+    repo_rules = Path("config/rules.json")
+    assert repo_rules.is_file(), "config/rules.json must exist in the repository root"
+
+    thresholds = AnomalyThresholds.from_file(repo_rules)
+    assert thresholds.night_lux_threshold == 50.0
+    assert thresholds.z_score_dirt == -2.5
+    assert thresholds.z_score_overheat == 2.5
+    assert thresholds.max_safe_temperature_c == 65.0
+    assert thresholds.max_safe_current_a == 16.0
