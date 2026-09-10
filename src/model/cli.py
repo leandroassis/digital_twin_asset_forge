@@ -21,6 +21,12 @@ def run(
     interval: float = typer.Option(5.0, "--interval", "-i", help="Interval in seconds between evaluations"),
     once: bool = typer.Option(False, "--once", help="Run a single evaluation round and exit"),
     viz_url: str = typer.Option("http://localhost:8000", "--viz-url", help="Base URL of the Web Visualizer"),
+    config_file: Optional[Path] = typer.Option(
+        Path("config/rules.json"),
+        "--config",
+        "-c",
+        help="Caminho para o arquivo JSON com regras e limiares de anomalia",
+    ),
     aasserver_path: Optional[Path] = typer.Option(
         None, "--aasserver-path", help="Optional path to aasserver.json for tag mapping"
     ),
@@ -30,23 +36,50 @@ def run(
     influx_token: str = typer.Option(config.INFLUXDB_TOKEN, "--influx-token"),
     influx_org: str = typer.Option(config.INFLUXDB_ORG, "--influx-org"),
     influx_bucket: str = typer.Option(config.INFLUXDB_BUCKET, "--influx-bucket"),
-    # Configurable Anomaly Thresholds
-    z_dirt: float = typer.Option(-2.5, "--z-dirt", help="Current Z-Score threshold for Dirt / Soiling (negative)"),
-    z_overheat: float = typer.Option(2.5, "--z-overheat", help="Temperature Z-Score threshold for Overheating"),
-    z_overcurrent: float = typer.Option(3.0, "--z-overcurrent", help="Current Z-Score threshold for Overcurrent"),
-    night_lux: float = typer.Option(50.0, "--night-lux", help="Maximum lux considered as Night condition"),
-    max_temp: float = typer.Option(65.0, "--max-temp", help="Absolute maximum safe temperature limit (°C)"),
-    max_current: float = typer.Option(16.0, "--max-current", help="Absolute maximum safe DC current limit (A)"),
+    # Configurable Anomaly Thresholds (opcionais; sobrescrevem o arquivo de configuração se fornecidos)
+    z_dirt: Optional[float] = typer.Option(None, "--z-dirt", help="Override: Current Z-Score threshold for Dirt (negative)"),
+    z_overheat: Optional[float] = typer.Option(None, "--z-overheat", help="Override: Temperature Z-Score threshold for Overheating"),
+    z_overcurrent: Optional[float] = typer.Option(None, "--z-overcurrent", help="Override: Current Z-Score threshold for Overcurrent"),
+    night_lux: Optional[float] = typer.Option(None, "--night-lux", help="Override: Maximum lux considered as Night condition"),
+    max_temp: Optional[float] = typer.Option(None, "--max-temp", help="Override: Absolute maximum safe temperature limit (°C)"),
+    max_current: Optional[float] = typer.Option(None, "--max-current", help="Override: Absolute maximum safe DC current limit (A)"),
 ) -> None:
     """Executes the continuous spatial Z-Score anomaly detection loop."""
-    thresholds = AnomalyThresholds(
-        night_lux_threshold=night_lux,
-        z_score_dirt=z_dirt,
-        z_score_overheat=z_overheat,
-        z_score_overcurrent=z_overcurrent,
-        max_safe_temperature_c=max_temp,
-        max_safe_current_a=max_current,
+
+    def _load_effective_thresholds() -> AnomalyThresholds:
+        base = AnomalyThresholds.from_file(config_file) if config_file and config_file.is_file() else AnomalyThresholds()
+        if z_dirt is not None:
+            base.z_score_dirt = z_dirt
+        if z_overheat is not None:
+            base.z_score_overheat = z_overheat
+        if z_overcurrent is not None:
+            base.z_score_overcurrent = z_overcurrent
+        if night_lux is not None:
+            base.night_lux_threshold = night_lux
+        if max_temp is not None:
+            base.max_safe_temperature_c = max_temp
+        if max_current is not None:
+            base.max_safe_current_a = max_current
+        return base
+
+    if config_file and config_file.is_file():
+        logger.info(f"Carregando regras de anomalia a partir do arquivo de configuração: {config_file}")
+    else:
+        logger.warning(f"Arquivo de configuração {config_file} não encontrado. Utilizando limiares padrão.")
+
+    thresholds = _load_effective_thresholds()
+    logger.info(
+        f"Limiares ativos: Z(Dirt)={thresholds.z_score_dirt}, Z(Overheat)={thresholds.z_score_overheat}, "
+        f"Z(Overcurrent)={thresholds.z_score_overcurrent}, MaxTemp={thresholds.max_safe_temperature_c}°C, "
+        f"MaxCurrent={thresholds.max_safe_current_a}A, NightLux={thresholds.night_lux_threshold}lux"
     )
+
+    last_config_mtime: Optional[float] = None
+    if config_file and config_file.is_file():
+        try:
+            last_config_mtime = config_file.stat().st_mtime
+        except OSError:
+            pass
 
     detector = AnomalyDetector(thresholds=thresholds)
     notifier = AlertNotifier(viz_base_url=viz_url)
@@ -61,6 +94,16 @@ def run(
     )
 
     while True:
+        # Hot-reload automático: se o arquivo de regras for alterado em disco, recarrega
+        if config_file and config_file.is_file():
+            try:
+                current_mtime = config_file.stat().st_mtime
+                if last_config_mtime is not None and current_mtime != last_config_mtime:
+                    last_config_mtime = current_mtime
+                    detector.thresholds = _load_effective_thresholds()
+                    logger.info(f"Arquivo {config_file} alterado! Novas regras carregadas e reaplicadas com sucesso.")
+            except OSError:
+                pass
         readings = fetch_latest_readings_from_influx(
             influx_host=influx_host,
             influx_port=influx_port,

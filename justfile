@@ -5,6 +5,7 @@ forge := venv / "bin" / "asset-forge"
 pytest := venv / "bin" / "pytest"
 
 namespace := env("ASSET_FORGE_NAMESPACE", "example.org/asset-forge")
+rules_config := env("RULES_CONFIG", "config/rules.json")
 
 # List available recipes
 default:
@@ -102,8 +103,8 @@ mock-sensor *args:
     {{forge}} mock-sensor run {{args}}
 
 # Run the Z-Score AI Anomaly Detection model against InfluxDB and sync alerts with the 3D visualizer
-run-ai *args:
-    {{forge}} model run {{args}}
+run-ai config=rules_config *args:
+    {{forge}} model run --config {{config}} {{args}}
 
 # Run the full test suite (unit + integration; integration runs against the real assets/ files)
 test:
