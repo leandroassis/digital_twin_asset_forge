@@ -7,9 +7,11 @@ Thresholds are centrally and easily configurable via `AnomalyThresholds`:
 - Overcurrent: Current surge exceeding statistical limit (Z > +3.0) or nominal maximum rating
 """
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Optional
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
 
 class FaultType(str, Enum):
@@ -25,8 +27,8 @@ class FaultType(str, Enum):
 class AnomalyThresholds:
     """Configurable detection thresholds.
 
-    Modify default values here or pass an instance with customized values
-    to tune detection sensitivity.
+    Modify default values here, load from a JSON configuration file,
+    or pass an instance with customized values to tune detection sensitivity.
     """
 
     # 1. Night Detection Thresholds
@@ -41,6 +43,55 @@ class AnomalyThresholds:
     # 3. Absolute Hard Safety Limits
     max_safe_temperature_c: float = 65.0  # Temperature (°C) above which overheating alert is unconditionally raised
     max_safe_current_a: float = 16.0  # DC current (A) above which overcurrent alert is unconditionally raised
+
+    def to_dict(self) -> Dict[str, float]:
+        """Returns threshold attributes as a dictionary."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AnomalyThresholds":
+        """Creates an AnomalyThresholds instance from a flat or nested dictionary.
+
+        Accepts nested groups like `{"statistical_z_scores": {"z_score_dirt": -2.0}}`
+        or flat keys like `{"z_score_dirt": -2.0}`.
+        """
+        flattened: Dict[str, Any] = {}
+        for key, val in data.items():
+            if isinstance(val, dict):
+                flattened.update(val)
+            else:
+                flattened[key] = val
+
+        valid_fields = set(cls.__dataclass_fields__.keys())
+        kwargs: Dict[str, float] = {}
+        for k, v in flattened.items():
+            if k in valid_fields and v is not None:
+                try:
+                    kwargs[k] = float(v)
+                except (ValueError, TypeError):
+                    continue
+
+        return cls(**kwargs)
+
+    @classmethod
+    def from_file(cls, path: Union[Path, str]) -> "AnomalyThresholds":
+        """Loads anomaly detection thresholds from a JSON file.
+
+        Falls back to default thresholds if the file does not exist or cannot be parsed.
+        """
+        file_path = Path(path)
+        if not file_path.is_file():
+            return cls()
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = json.load(f)
+            if isinstance(content, dict):
+                return cls.from_dict(content)
+        except Exception:
+            pass
+
+        return cls()
 
 
 @dataclass

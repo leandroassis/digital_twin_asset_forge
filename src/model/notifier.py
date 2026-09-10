@@ -13,7 +13,22 @@ class AlertNotifier:
 
     def __init__(self, viz_base_url: str = "http://localhost:8000"):
         self.base_url = viz_base_url.rstrip("/")
-        self._last_alerted_elements: Set[str] = set()
+        self._last_alerted_elements: Set[str] = self._fetch_remote_alerted_elements()
+
+    def _fetch_remote_alerted_elements(self) -> Set[str]:
+        """Fetches active alert element IDs from the visualizer API to reconcile state on startup."""
+        try:
+            resp = requests.get(f"{self.base_url}/api/alerts", timeout=3)
+            if resp.status_code == 200:
+                data = resp.json()
+                alerts = data.get("alerts", [])
+                elements = {a["element_id"] for a in alerts if isinstance(a, dict) and "element_id" in a}
+                if elements:
+                    logger.info(f"Reconciliando com o visualizador: {len(elements)} alerta(s) pré-existente(s) detectado(s).")
+                return elements
+        except requests.RequestException:
+            pass
+        return set()
 
     def sync_alerts(self, current_alerts: List[AlertPayload]) -> Dict[str, int]:
         """Dispatches active alerts and clears alerts for panels that returned to normal."""
