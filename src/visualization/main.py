@@ -30,6 +30,21 @@ app = FastAPI(
 
 basyx_service = VisualizationBasyxService()
 
+
+@app.middleware("http")
+async def _no_cache_for_web_assets(request, call_next):
+    """Forces every response under `/web/` (the SPA's own JS/CSS/HTML) to
+    skip caching entirely. Confirmed live: a stale cached ES module (e.g.
+    viewer3d.js) can keep reproducing an already-fixed bug in the browser
+    even after the server is verified to be serving the new file
+    byte-for-byte -- this is dev-time infra, not app logic, so unconditional
+    no-store is simpler and safer here than trying to version-bust
+    individual asset URLs."""
+    response = await call_next(request)
+    if request.url.path.startswith("/web/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 # Armazenamento em memória para alertas recebidos da IA / simulação
 ACTIVE_ALERTS: Dict[str, Dict[str, Any]] = {}
 

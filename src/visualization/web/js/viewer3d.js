@@ -2,6 +2,13 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
+// GLTFLoader's own auto-generated name for a primitive mesh that has no
+// glTF `Mesh.name` of its own -- "mesh_<meshIndex>", plus a "_<n>" suffix
+// for every primitive beyond the first under the same Group. Never a real
+// identifier; used to tell a genuinely meaningful legacy `.name` (e.g. a
+// GlobalId from the IfcConvert path) apart from this noise.
+const GENERATED_MESH_NAME_RE = /^mesh_\d+(_\d+)?$/;
+
 export class Viewer3D {
     constructor(canvasId, onElementSelectedCallback) {
         this.canvas = document.getElementById(canvasId);
@@ -37,7 +44,7 @@ export class Viewer3D {
             })
         };
 
-        this.selectedMesh = null;
+        this.selectedAnchor = null;
         this.originalMaterialsMap = new Map();
         this.meshByGlobalIdMap = new Map();
         this.alertStatesMap = new Map();
@@ -109,17 +116,7 @@ export class Viewer3D {
             (gltf) => {
                 this.currentModel = gltf.scene;
                 this.scene.add(this.currentModel);
-
-                // Indexar malhas por GlobalId / Name
-                this.currentModel.traverse((child) => {
-                    if (child.isMesh) {
-                        const globalId = child.userData.GlobalId || child.userData.guid || child.name;
-                        if (globalId) {
-                            this.meshByGlobalIdMap.set(globalId, child);
-                            this.originalMaterialsMap.set(child.uuid, child.material);
-                        }
-                    }
-                });
+                this._indexElements();
 
                 // Centralizar a câmera automaticamente no modelo
                 this.resetCamera();
@@ -133,6 +130,43 @@ export class Viewer3D {
         );
     }
 
+    // Indexa cada elemento pelo seu GlobalId real. asset-forge's own
+    // plant.glb (export/glb.py) grupa as faces de um elemento por estilo de
+    // superfície IFC -- um elemento com mais de um material vira mais de
+    // uma glTF Primitive dentro do mesmo Mesh, e o GLTFLoader então envolve
+    // essas primitivas num THREE.Group. Só o Group carrega os `extras`
+    // (GlobalId) do node original; suas malhas-filhas individuais não
+    // carregam nada, só um nome auto-gerado tipo "mesh_259" -- confirmado
+    // ao vivo (painéis solares, que têm vidro+moldura como dois materiais
+    // distintos, eram exatamente os que falhavam ao clicar). Por isso este
+    // índice varre TODO objeto (não só isMesh): o primeiro nível que carrega
+    // um GlobalId de verdade -- seja o Group inteiro ou um Mesh solitário --
+    // é o "âncora" certo daquele elemento, e a varredura não desce further
+    // dentro dele (evita indexar as malhas-filhas sob nomes-lixo).
+    _indexElements() {
+        this.currentModel.traverse((obj) => {
+            const id = obj.userData.globalId || obj.userData.GlobalId || obj.userData.guid;
+            if (id) {
+                this.meshByGlobalIdMap.set(id, obj);
+            } else if (obj.isMesh && obj.name && !GENERATED_MESH_NAME_RE.test(obj.name)) {
+                // Fallback para GLBs do pipeline legado (IfcConvert), que
+                // nomeia cada malha diretamente pelo GlobalId, sem extras.
+                if (!this.meshByGlobalIdMap.has(obj.name)) {
+                    this.meshByGlobalIdMap.set(obj.name, obj);
+                }
+            }
+
+            // Guarda o material original de toda malha real (inclusive as
+            // "mesh_259" filhas de um Group multi-material), não só das que
+            // viraram âncora -- selectElement/setAlertState aplicam material
+            // em cada descendente via _applyMaterial, então cada um precisa
+            // do seu próprio material original para restaurar depois.
+            if (obj.isMesh && !this.originalMaterialsMap.has(obj.uuid)) {
+                this.originalMaterialsMap.set(obj.uuid, obj.material);
+            }
+        });
+    }
+
     _onCanvasClick(event) {
         const rect = this.canvas.getBoundingClientRect();
         this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -144,10 +178,32 @@ export class Viewer3D {
         if (intersects.length > 0) {
             const hitMesh = intersects.find(i => i.object.isMesh)?.object;
             if (hitMesh) {
-                const globalId = hitMesh.userData.GlobalId || hitMesh.userData.guid || hitMesh.name;
+                const globalId = this._resolveGlobalId(hitMesh);
                 this.selectElement(globalId, true);
             }
         }
+    }
+
+    // Walks up from `object` (a raycast hit is always an individual
+    // primitive Mesh, possibly one of a multi-material Group's anonymous
+    // children -- see _indexElements) to the nearest ancestor that actually
+    // carries this element's identity, then reads its GlobalId/name off of
+    // that ancestor. Stops at the model root so it never wanders into an
+    // unrelated sibling element.
+    _resolveAnchor(object) {
+        let node = object;
+        while (node && node !== this.currentModel) {
+            const id = node.userData.globalId || node.userData.GlobalId || node.userData.guid;
+            if (id) return node;
+            if (node.name && !GENERATED_MESH_NAME_RE.test(node.name)) return node;
+            node = node.parent;
+        }
+        return object;
+    }
+
+    _resolveGlobalId(object) {
+        const anchor = this._resolveAnchor(object);
+        return anchor.userData.globalId || anchor.userData.GlobalId || anchor.userData.guid || anchor.name;
     }
 
     _onCanvasMouseMove(event) {
@@ -159,8 +215,8 @@ export class Viewer3D {
         const intersects = this.raycaster.intersectObjects(this.scene.children, true);
 
         if (intersects.length > 0 && intersects[0].object.isMesh) {
-            const hit = intersects[0].object;
-            const name = hit.name || hit.userData.GlobalId || 'Elemento 3D';
+            const anchor = this._resolveAnchor(intersects[0].object);
+            const name = anchor.userData.name || this._resolveGlobalId(anchor) || 'Elemento 3D';
             this.tooltip.innerText = name;
             this.tooltip.style.left = `${event.clientX + 12}px`;
             this.tooltip.style.top = `${event.clientY + 12}px`;
@@ -170,25 +226,41 @@ export class Viewer3D {
         }
     }
 
+    // Aplica `material` em toda malha real descendente de `anchor` (um
+    // Group multi-material tem várias; um Mesh solitário só a si mesmo --
+    // traverse() sempre visita o próprio objeto primeiro).
+    _applyMaterial(anchor, material) {
+        anchor.traverse((obj) => {
+            if (obj.isMesh) obj.material = material;
+        });
+    }
+
+    _restoreMaterial(anchor) {
+        const alertType = this.alertStatesMap.get(this._resolveGlobalId(anchor));
+        if (alertType && this.materials[alertType]) {
+            this._applyMaterial(anchor, this.materials[alertType]);
+            return;
+        }
+        anchor.traverse((obj) => {
+            if (obj.isMesh) {
+                obj.material = this.originalMaterialsMap.get(obj.uuid) || obj.material;
+            }
+        });
+    }
+
     selectElement(globalId, notifyCallback = false) {
         if (!globalId) return;
 
         // Restaurar material anterior se não estiver em alerta
-        if (this.selectedMesh) {
-            const uuid = this.selectedMesh.uuid;
-            const alertType = this.alertStatesMap.get(this.selectedMesh.name);
-            if (alertType && this.materials[alertType]) {
-                this.selectedMesh.material = this.materials[alertType];
-            } else {
-                this.selectedMesh.material = this.originalMaterialsMap.get(uuid) || this.selectedMesh.material;
-            }
+        if (this.selectedAnchor) {
+            this._restoreMaterial(this.selectedAnchor);
         }
 
-        const targetMesh = this.meshByGlobalIdMap.get(globalId);
-        if (targetMesh) {
-            this.selectedMesh = targetMesh;
-            targetMesh.material = this.materials.selected;
-            this.focusCameraOnMesh(targetMesh);
+        const targetAnchor = this._lookupMesh(globalId);
+        if (targetAnchor) {
+            this.selectedAnchor = targetAnchor;
+            this._applyMaterial(targetAnchor, this.materials.selected);
+            this.focusCameraOnMesh(targetAnchor);
         }
 
         if (notifyCallback && this.onElementSelected) {
@@ -196,25 +268,45 @@ export class Viewer3D {
         }
     }
 
+    // The left BaSyx tree passes a shell's full asset URI
+    // (".../asset/ifc/<GlobalId>" or ".../asset/virtual/<id>"); plant.glb's
+    // nodes -- and this.meshByGlobalIdMap, keyed off them via
+    // _resolveGlobalId -- use the bare id instead. An exact match already
+    // covers a direct 3D click (which passes the bare id straight through);
+    // falling back to the URI's last path segment is what lets a
+    // tree-driven selection find -- and center the camera on -- the right
+    // element too, not just fetch its metadata (which already tolerated
+    // either format server-side, see basyx_service.py::get_shell_by_global_id).
+    _lookupMesh(globalId) {
+        if (this.meshByGlobalIdMap.has(globalId)) {
+            return this.meshByGlobalIdMap.get(globalId);
+        }
+        return this.meshByGlobalIdMap.get(globalId.split('/').pop());
+    }
+
     setAlertState(globalId, alertType) {
-        const mesh = this.meshByGlobalIdMap.get(globalId);
-        if (mesh) {
-            this.alertStatesMap.set(globalId, alertType);
+        const anchor = this._lookupMesh(globalId);
+        if (anchor) {
+            this.alertStatesMap.set(this._resolveGlobalId(anchor), alertType);
             let mat = this.materials.alertOverheat;
             if (alertType === 'Sujeira') mat = this.materials.alertDirt;
             if (alertType === 'Sobrecorrente') mat = this.materials.alertOvercurrent;
             if (alertType === 'Noite') mat = this.materials.alertNight;
 
-            mesh.material = mat;
+            this._applyMaterial(anchor, mat);
         }
     }
 
     clearAlertState(globalId) {
-        this.alertStatesMap.delete(globalId);
-        const mesh = this.meshByGlobalIdMap.get(globalId);
-        if (mesh) {
-            const origMat = this.originalMaterialsMap.get(mesh.uuid);
-            if (origMat) mesh.material = origMat;
+        const anchor = this._lookupMesh(globalId);
+        if (anchor) {
+            this.alertStatesMap.delete(this._resolveGlobalId(anchor));
+            anchor.traverse((obj) => {
+                if (obj.isMesh) {
+                    const origMat = this.originalMaterialsMap.get(obj.uuid);
+                    if (origMat) obj.material = origMat;
+                }
+            });
         }
     }
 
