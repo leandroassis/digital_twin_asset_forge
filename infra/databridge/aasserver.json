@@ -1,5 +1,23 @@
 [
   {
+    "uniqueId": "aas-INVERTER-VAC",
+    "submodelEndpoint": "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvdmlydHVhbC9pbnZlcnRlci9zbS9vcGN1YQ",
+    "idShortPath": "VoltageAC",
+    "api": "DOT_AAS_V3"
+  },
+  {
+    "uniqueId": "aas-INVERTER-IAC",
+    "submodelEndpoint": "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvdmlydHVhbC9pbnZlcnRlci9zbS9vcGN1YQ",
+    "idShortPath": "CurrentAC",
+    "api": "DOT_AAS_V3"
+  },
+  {
+    "uniqueId": "aas-INVERTER-PAC",
+    "submodelEndpoint": "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvdmlydHVhbC9pbnZlcnRlci9zbS9vcGN1YQ",
+    "idShortPath": "PowerAC",
+    "api": "DOT_AAS_V3"
+  },
+  {
     "uniqueId": "aas-PANEL-1529520-LUX",
     "submodelEndpoint": "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvaWZjLzJRRjMkRiRYSEYxQSRQdXViSjhkSjgvc20vb3BjdWE",
     "idShortPath": "LightIntensity",
@@ -14565,24 +14583,6 @@
     "uniqueId": "aas-PANEL-1531582-VDC",
     "submodelEndpoint": "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvaWZjLzJRRjMkRiRYSEYxQSRQdXViSjhkcDYvc20vb3BjdWE",
     "idShortPath": "VoltageDC",
-    "api": "DOT_AAS_V3"
-  },
-  {
-    "uniqueId": "aas-INVERTER-VAC",
-    "submodelEndpoint": "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvdmlydHVhbC9pbnZlcnRlci9zbS9vcGN1YQ",
-    "idShortPath": "VoltageAC",
-    "api": "DOT_AAS_V3"
-  },
-  {
-    "uniqueId": "aas-INVERTER-IAC",
-    "submodelEndpoint": "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvdmlydHVhbC9pbnZlcnRlci9zbS9vcGN1YQ",
-    "idShortPath": "CurrentAC",
-    "api": "DOT_AAS_V3"
-  },
-  {
-    "uniqueId": "aas-INVERTER-PAC",
-    "submodelEndpoint": "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvdmlydHVhbC9pbnZlcnRlci9zbS9vcGN1YQ",
-    "idShortPath": "PowerAC",
     "api": "DOT_AAS_V3"
   }
 ]

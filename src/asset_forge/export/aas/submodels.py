@@ -1,14 +1,12 @@
 """Builds the AAS submodels this pipeline populates from a plant IFC
 element: a minimal Nameplate, a TechnicalData sheet carrying every existing
-pset generically (or a lean summary for non-panel elements, see
-`build_lean_technicaldata_submodel`), an OPC UA datasheet with a
-*configurable* connection endpoint and optional writable sensor Properties,
-and a TimeSeries descriptor -- no OPC UA client/server code, see config.py.
+pset generically, an OPC UA datasheet with a *configurable* connection
+endpoint and optional writable sensor Properties, and a TimeSeries
+descriptor -- no OPC UA client/server code, see config.py.
 """
 
 from typing import Any, Sequence
 
-import ifcopenshell.util.element
 from basyx.aas import model
 
 from asset_forge.config import HISTORY_API_HOST, HISTORY_API_PORT, OPCUA_HOST, OPCUA_PORT
@@ -16,8 +14,6 @@ from asset_forge.elements.properties import read_all_psets
 from asset_forge.export.aas.idshort import unique_id_shorts
 from asset_forge.export.aas.solar import OpcuaVariable
 from asset_forge.export.aas.templates import load_template
-
-DEFAULT_LEAN_FIELDS = ("IfcClass", "Name", "GlobalId", "Tag", "ContainingStorey")
 
 
 def build_nameplate_submodel(entity: Any, namespace: str) -> model.Submodel:
@@ -72,43 +68,6 @@ def build_technicaldata_submodel(entity: Any) -> model.Submodel:
             area.value.add(model.Property(id_short=prop_slugs[prop_name], value_type=str, value=str(value)))
         if len(area.value):
             areas.value.add(area)
-
-    return submodel
-
-
-def build_lean_technicaldata_submodel(entity: Any, fields: Sequence[str] = DEFAULT_LEAN_FIELDS) -> model.Submodel:
-    """A deliberately thin TechnicalData for elements that don't need their
-    full raw-pset dump (see export/aas/package.py's full/lean split).
-
-    Deliberately NOT built from the official `"technicaldata"` IDTA
-    template, unlike `build_technicaldata_submodel` -- every one of that
-    template's ~20 leaf fields (semanticId + qualifiers, even when left
-    empty) costs 600-800 bytes on its own once serialized, measured at
-    ~12KB/element even after clearing every placeholder list this module
-    already knew about. Multiplied by several thousand non-panel elements,
-    that alone blew the AASX's single data.json past BaSyx's ~100MB
-    real-server cap (a live upload 500'd on a 291MB uncompressed data.json --
-    the compressed on-disk .aasx size is a poor proxy for this: JSON's
-    boilerplate-heavy repetition compresses away almost entirely, so a small
-    file on disk can still fail server-side). A bare, from-scratch Submodel
-    with only plain Properties has none of that per-field overhead."""
-    submodel = model.Submodel(id_="placeholder", id_short="technicaldata")
-
-    storey = ifcopenshell.util.element.get_container(entity)
-    values = {
-        "IfcClass": entity.is_a(),
-        "Name": str(entity.Name) if entity.Name else None,
-        "GlobalId": entity.GlobalId,
-        "Tag": str(entity.Tag) if entity.Tag else None,
-        "ContainingStorey": str(storey.Name) if storey is not None and storey.Name else None,
-    }
-    prop_items = {name: values[name] for name in fields if values.get(name) is not None}
-    prop_slugs = unique_id_shorts(prop_items.keys(), fallback="Prop")
-
-    identification = model.SubmodelElementCollection(id_short="Identification")
-    for name, value in prop_items.items():
-        identification.value.add(model.Property(id_short=prop_slugs[name], value_type=str, value=str(value)))
-    submodel.submodel_element.add(identification)
 
     return submodel
 

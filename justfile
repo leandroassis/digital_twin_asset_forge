@@ -37,11 +37,18 @@ convert-glb project:
 convert-all *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    # `asset-forge convert` already writes plant.glb itself (--glb, on by
+    # default, via export/glb.py -- no external binary needed). This loop
+    # used to also call `just convert-glb` (the legacy IfcConvert-based
+    # recipe) per project, which is both redundant with that and requires a
+    # `bin/IfcConvert` binary that isn't checked into the repo (gitignored,
+    # per-developer) -- broke this recipe outright on any machine without
+    # it. Run `just convert-glb <project>` yourself if you specifically want
+    # that legacy path.
     for dir in assets/*/; do
         project="$(basename "$dir")"
         echo "== converting $project =="
         {{forge}} convert "assets/$project" --namespace {{namespace}} {{args}}
-        just convert-glb "$project"
     done
 
 # Shortcut: convert the solar-plant project

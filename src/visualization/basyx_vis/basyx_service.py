@@ -249,8 +249,16 @@ class VisualizationBasyxService:
                 if ifc_guid_converted in g_id or ifc_guid_converted in aas_id or ifc_guid_converted == id_short:
                     return shell
 
-            # Correspondência exata em qualquer dos atributos
-            if clean_id in (g_id, aas_id, id_short, raw_id):
+            # Correspondência exata em qualquer dos atributos -- compara os
+            # campos DESTA shell (g_id/aas_id/id_short) contra a consulta
+            # (limpa ou crua). Bug real corrigido aqui: a versão anterior
+            # testava `clean_id in (g_id, aas_id, id_short, raw_id)`, que
+            # inclui `raw_id` no mesmo tuple sendo comparado -- como
+            # `clean_id == raw_id` sempre que nenhum prefixo/sufixo foi
+            # removido (o caso comum para GlobalIds), a condição virava
+            # `clean_id == clean_id`, sempre verdadeira, e a busca retornava
+            # sempre a PRIMEIRA shell da lista, nunca a correta.
+            if g_id in (clean_id, raw_id) or aas_id in (clean_id, raw_id) or id_short in (clean_id, raw_id):
                 return shell
             if g_id.endswith(clean_id) or aas_id.endswith(clean_id):
                 return shell

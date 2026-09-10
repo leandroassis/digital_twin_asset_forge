@@ -1,5 +1,29 @@
 [
   {
+    "routeId": "route-INVERTER-VAC",
+    "datasource": "opcua-INVERTER-VAC",
+    "datasinks": [
+      "aas-INVERTER-VAC"
+    ],
+    "trigger": "event"
+  },
+  {
+    "routeId": "route-INVERTER-IAC",
+    "datasource": "opcua-INVERTER-IAC",
+    "datasinks": [
+      "aas-INVERTER-IAC"
+    ],
+    "trigger": "event"
+  },
+  {
+    "routeId": "route-INVERTER-PAC",
+    "datasource": "opcua-INVERTER-PAC",
+    "datasinks": [
+      "aas-INVERTER-PAC"
+    ],
+    "trigger": "event"
+  },
+  {
     "routeId": "route-PANEL-1529520-LUX",
     "datasource": "opcua-PANEL-1529520-LUX",
     "datasinks": [
@@ -19420,30 +19444,6 @@
     "datasource": "opcua-PANEL-1531582-VDC",
     "datasinks": [
       "aas-PANEL-1531582-VDC"
-    ],
-    "trigger": "event"
-  },
-  {
-    "routeId": "route-INVERTER-VAC",
-    "datasource": "opcua-INVERTER-VAC",
-    "datasinks": [
-      "aas-INVERTER-VAC"
-    ],
-    "trigger": "event"
-  },
-  {
-    "routeId": "route-INVERTER-IAC",
-    "datasource": "opcua-INVERTER-IAC",
-    "datasinks": [
-      "aas-INVERTER-IAC"
-    ],
-    "trigger": "event"
-  },
-  {
-    "routeId": "route-INVERTER-PAC",
-    "datasource": "opcua-INVERTER-PAC",
-    "datasinks": [
-      "aas-INVERTER-PAC"
     ],
     "trigger": "event"
   }

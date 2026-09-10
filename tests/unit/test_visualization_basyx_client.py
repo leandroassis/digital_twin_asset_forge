@@ -67,6 +67,40 @@ def test_get_shell_by_global_id_uuid_conversion():
         assert shell["idShort"] == "HVAC-AS-AHU-B05_906281"
 
 
+def test_get_shell_by_global_id_matches_the_requested_shell_not_just_the_first_one():
+    # Real bug, found live against a 10,107-shell deployment: the exact-match
+    # check used to be `clean_id in (g_id, aas_id, id_short, raw_id)` --
+    # since `clean_id == raw_id` whenever no prefix/suffix stripping applies
+    # (the common case for a bare IFC GlobalId, e.g. glb.py's own node
+    # names), that condition was trivially true on the very FIRST shell in
+    # the list, so every click resolved to whatever shell BaSyx happened to
+    # return first, never the one actually requested. A single-shell mock
+    # can't catch this (index 0 is "correct" by definition when there's only
+    # one shell) -- this uses several, with the target NOT first.
+    service = VisualizationBasyxService()
+    mock_response = MagicMock(status_code=200)
+    mock_response.json.return_value = {
+        "result": [
+            {
+                "id": "https://example.org/asset-forge/aas/ifc/AAAAAAAAAAAAAAAAAAAAAA",
+                "idShort": "Floor_Generic_170mm_1510189_7",
+                "assetInformation": {"globalAssetId": "https://example.org/asset-forge/asset/ifc/AAAAAAAAAAAAAAAAAAAAAA"},
+            },
+            {
+                "id": "https://example.org/asset-forge/aas/ifc/2QF3$F$XHF1A$PuubJ8YRJ",
+                "idShort": "M_Concrete-Rectangular_Beam_700_x_900mm_1508523",
+                "assetInformation": {"globalAssetId": "https://example.org/asset-forge/asset/ifc/2QF3$F$XHF1A$PuubJ8YRJ"},
+            },
+        ]
+    }
+
+    with patch.object(service._session, "get", return_value=mock_response):
+        shell = service.get_shell_by_global_id("2QF3$F$XHF1A$PuubJ8YRJ")
+
+    assert shell is not None
+    assert shell["idShort"] == "M_Concrete-Rectangular_Beam_700_x_900mm_1508523"
+
+
 def test_get_telemetry_for_element_follows_linked_segment_to_history_api():
     service = VisualizationBasyxService()
 

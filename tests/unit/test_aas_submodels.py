@@ -9,7 +9,6 @@ from basyx.aas import model as aas_model  # noqa: E402
 
 from asset_forge.export.aas.solar import OpcuaVariable  # noqa: E402
 from asset_forge.export.aas.submodels import (  # noqa: E402
-    build_lean_technicaldata_submodel,
     build_nameplate_submodel,
     build_opcua_submodel,
     build_technicaldata_submodel,
@@ -95,31 +94,6 @@ def test_opcua_submodel_adds_one_writable_property_per_variable():
     assert set(properties) == {"CurrentDC", "VoltageDC"}
     assert properties["CurrentDC"].value == 0.0
     assert properties["CurrentDC"].value_type == float
-
-
-def test_lean_technicaldata_carries_only_identifying_fields(model, wall):
-    pset = ifcopenshell.api.pset.add_pset(model, product=wall, name="Pset_WallCommon")
-    ifcopenshell.api.pset.edit_pset(model, pset=pset, properties={"FireRating": "REI60"})
-
-    submodel = build_lean_technicaldata_submodel(wall)
-
-    assert submodel.id_short == "technicaldata"
-    # deliberately a bare Submodel, not built from the IDTA template -- no
-    # TechnicalPropertyAreas/GeneralInformation wrapper, just one
-    # Identification collection directly on the submodel (see the
-    # function's docstring for why: per-field IDTA template overhead was
-    # what blew a real upload past BaSyx's data.json size cap).
-    top_level = list(submodel.submodel_element)
-    assert len(top_level) == 1
-    identification = top_level[0]
-    assert identification.id_short == "Identification"
-
-    values = {p.id_short: p.value for p in identification.value}
-    assert values["IfcClass"] == "IfcWall"
-    assert values["Name"] == "Wall-01"
-    assert values["GlobalId"] == wall.GlobalId
-    # the full raw-pset dump must not appear in the lean version
-    assert "Pset_WallCommon" not in {p.id_short for p in identification.value}
 
 
 def test_timeseries_submodel_points_a_linked_segment_at_the_history_api():

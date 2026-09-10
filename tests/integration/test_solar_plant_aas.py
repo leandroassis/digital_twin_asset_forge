@@ -1,3 +1,4 @@
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,14 @@ SOLAR_PLANT_FILE = REPO_ROOT / "assets" / "solar-plant" / "20220221KT-ZCB (combi
 
 
 @pytest.mark.skipif(not SOLAR_PLANT_FILE.is_file(), reason="sample asset not present")
-def test_solar_plant_produces_exactly_one_aasx_with_panels_and_a_virtual_inverter(tmp_path):
+def test_solar_plant_every_shell_is_fully_decorated_across_all_produced_aasx(tmp_path):
+    # Every shell now carries Nameplate + full TechnicalData + Model3DIFC
+    # (not just solar panels), which no longer fits in a single package --
+    # multiple .aasx files is the expected, supported outcome (see
+    # package.py's module docstring). `just basyx-upload`/`asset-forge basyx
+    # upload` already iterate over every file a project produces, so this
+    # test does the same: aggregate across every file produced, like a real
+    # upload would end up with in one running BaSyx instance.
     plant = build_plant([SOLAR_PLANT_FILE])
 
     out_paths = build_and_write_aasx(
@@ -27,13 +35,17 @@ def test_solar_plant_produces_exactly_one_aasx_with_panels_and_a_virtual_inverte
         opcua_port=4840,
     )
 
-    assert [p.name for p in out_paths] == ["model.aasx"]
-    assert out_paths[0].stat().st_size < 100_000_000
+    assert len(out_paths) > 1
+    for path in out_paths:
+        assert path.stat().st_size < 100_000_000
+        with zipfile.ZipFile(path) as zf:
+            assert len(zf.namelist()) < 1000
 
     store = model.DictIdentifiableStore()
     file_store = aasx.DictSupplementaryFileContainer()
-    with aasx.AASXReader(str(out_paths[0])) as reader:
-        reader.read_into(object_store=store, file_store=file_store)
+    for path in out_paths:
+        with aasx.AASXReader(str(path)) as reader:
+            reader.read_into(object_store=store, file_store=file_store)
 
     shells = [o for o in store if isinstance(o, model.AssetAdministrationShell)]
     submodels = [o for o in store if isinstance(o, model.Submodel)]
@@ -44,6 +56,18 @@ def test_solar_plant_produces_exactly_one_aasx_with_panels_and_a_virtual_inverte
     inverter_shells = [s for s in shells if "/aas/virtual/inverter" in s.id]
     assert len(inverter_shells) == 1
 
+    nameplate_submodels = [sm for sm in submodels if sm.id_short == "nameplate"]
+    # every real element + the virtual inverter
+    assert len(nameplate_submodels) == element_count + 1
+
+    model3difc_submodels = [
+        sm
+        for sm in submodels
+        if sm.id_short == "technicaldata" and any(e.id_short == "Model3DIFC" for e in sm.submodel_element)
+    ]
+    # every real element -- the virtual inverter has no technicaldata submodel at all (not IFC-backed)
+    assert len(model3difc_submodels) == element_count
+
     opcua_submodels_with_sensor_properties = [
         sm
         for sm in submodels
@@ -52,10 +76,5 @@ def test_solar_plant_produces_exactly_one_aasx_with_panels_and_a_virtual_inverte
     # 607 real panels + 1 virtual inverter, each carrying their own sensor Properties
     assert len(opcua_submodels_with_sensor_properties) == 608
 
-    model3difc_submodels = [
-        sm
-        for sm in submodels
-        if sm.id_short == "technicaldata" and any(e.id_short == "Model3DIFC" for e in sm.submodel_element)
-    ]
-    # 607 real panels only -- the virtual inverter has no technicaldata submodel at all (not IFC-backed)
-    assert len(model3difc_submodels) == 607
+    timeseries_submodels = [sm for sm in submodels if sm.id_short == "timeseries"]
+    assert len(timeseries_submodels) == 608

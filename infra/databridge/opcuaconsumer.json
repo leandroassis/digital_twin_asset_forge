@@ -1,5 +1,29 @@
 [
   {
+    "uniqueId": "opcua-INVERTER-VAC",
+    "serverUrl": "localhost",
+    "serverPort": 4840,
+    "pathToService": "",
+    "nodeInformation": "ns=2;s=INVERTER-VAC",
+    "requestedPublishingInterval": 1000
+  },
+  {
+    "uniqueId": "opcua-INVERTER-IAC",
+    "serverUrl": "localhost",
+    "serverPort": 4840,
+    "pathToService": "",
+    "nodeInformation": "ns=2;s=INVERTER-IAC",
+    "requestedPublishingInterval": 1000
+  },
+  {
+    "uniqueId": "opcua-INVERTER-PAC",
+    "serverUrl": "localhost",
+    "serverPort": 4840,
+    "pathToService": "",
+    "nodeInformation": "ns=2;s=INVERTER-PAC",
+    "requestedPublishingInterval": 1000
+  },
+  {
     "uniqueId": "opcua-PANEL-1529520-LUX",
     "serverUrl": "localhost",
     "serverPort": 4840,
@@ -19421,30 +19445,6 @@
     "serverPort": 4840,
     "pathToService": "",
     "nodeInformation": "ns=2;s=PANEL-1531582-VDC",
-    "requestedPublishingInterval": 1000
-  },
-  {
-    "uniqueId": "opcua-INVERTER-VAC",
-    "serverUrl": "localhost",
-    "serverPort": 4840,
-    "pathToService": "",
-    "nodeInformation": "ns=2;s=INVERTER-VAC",
-    "requestedPublishingInterval": 1000
-  },
-  {
-    "uniqueId": "opcua-INVERTER-IAC",
-    "serverUrl": "localhost",
-    "serverPort": 4840,
-    "pathToService": "",
-    "nodeInformation": "ns=2;s=INVERTER-IAC",
-    "requestedPublishingInterval": 1000
-  },
-  {
-    "uniqueId": "opcua-INVERTER-PAC",
-    "serverUrl": "localhost",
-    "serverPort": 4840,
-    "pathToService": "",
-    "nodeInformation": "ns=2;s=INVERTER-PAC",
     "requestedPublishingInterval": 1000
   }
 ]

@@ -1,6 +1,17 @@
 """Builds one AAS Shell per plant IFC element (plus a virtual shell for the
 plant's inverter, which has no backing IfcElement) and writes them into
-.aasx package(s), batched to stay under a real, confirmed Apache POI limit."""
+.aasx package(s), batched to stay under a real, confirmed Apache POI limit.
+
+Every shell -- not just solar panels -- carries the full Nameplate +
+TechnicalData (every real pset) + Model3DIFC (embedded per-element geometry);
+only `opcua`/`timeseries` stay scoped to elements with an actual sensor
+reading behind them (solar panels, the virtual inverter, IfcSensor/
+IfcFlowMeter) -- an `opcua` submodel with zero Properties, or a
+`timeseries` pointing at an InfluxDB id that will never receive data,
+wouldn't mean anything on a wall or beam. Uniform full decoration for ~10k elements does not fit in one
+package (see DEFAULT_BATCH_SIZE below) -- multiple `.aasx` files are the
+expected, supported outcome; `asset-forge basyx upload`/`just basyx-upload`
+already iterate over every file a project produced."""
 
 import io
 from pathlib import Path
@@ -15,7 +26,6 @@ from asset_forge.export.aas.geometry import extract_element_ifc
 from asset_forge.export.aas.shell import build_shell, build_virtual_shell
 from asset_forge.export.aas.solar import INVERTER_VARIABLES, PANEL_VARIABLES, OpcuaVariable, is_solar_panel
 from asset_forge.export.aas.submodels import (
-    build_lean_technicaldata_submodel,
     build_nameplate_submodel,
     build_opcua_submodel,
     build_technicaldata_submodel,
@@ -27,29 +37,28 @@ from asset_forge.ingestion.loader import PathLike
 _MODEL_3D_ID_SHORT = "Model3DIFC"
 
 # Element classes that get an OPC UA datasheet submodel regardless of the
-# panel/lean split below -- a live OPC UA endpoint would only ever expose a
-# value for a sensor/meter; everything else (other than solar panels) gets
-# just Nameplate + TechnicalData.
+# panel/inverter check below -- a live OPC UA endpoint would only ever
+# expose a value for a sensor/meter, so this is where opcua/timeseries stay
+# scoped even though every element now gets full Nameplate/TechnicalData.
 _OPCUA_ELIGIBLE_CLASSES = ("IfcSensor", "IfcFlowMeter")
 
-# A single AASX package (a zip/OPC package) has one real, confirmed,
-# non-configurable Apache POI limit to stay under: `org.apache.poi.util.IOUtils`
-# refuses to allocate more than 100,000,000 bytes for a single record/part
-# when reading it back. A naive single `/aasx/data.json` holding a full
-# raw-pset TechnicalData dump for every element of a several-thousand-element
-# plant can measure well over that (confirmed: 158MB for a 5096-element
-# plant). The full/lean TechnicalData split (see export/aas/solar.py,
-# submodels.py) is what actually keeps a single package's data.json under
-# this cap now; `batch_size` remains as a safety net for a plant whose
-# full/lean split still doesn't fit.
+# A single AASX package (a zip/OPC package) has two real, confirmed,
+# non-configurable Apache POI limits to stay under, both hit live against a
+# real BaSyx server:
 #
-# The *other* Apache POI limit this pipeline used to also guard against --
-# `ZipSecureFile`'s 1000-total-zip-entries cap -- no longer needs batching to
-# stay under: `_attach_geometry` (one embedded IFC file per element) is now
-# only called for the "full" tier (solar panels + the virtual inverter),
-# so a plant's total entry count is bounded by that tier's size, not by its
-# total element count.
-DEFAULT_BATCH_SIZE = 20_000
+# 1. `org.apache.poi.util.IOUtils` refuses to allocate more than
+#    100,000,000 bytes for a single record/part when reading a package back
+#    (a raw-pset TechnicalData dump for ~10k elements measures well over
+#    that in one data.json).
+# 2. `ZipSecureFile`'s zip-bomb guard rejects any package with more than
+#    1000 total zip entries. Since every element now gets its own
+#    Model3DIFC geometry file attached (not just solar panels), this is the
+#    binding constraint: one geometry file per element in a batch, plus
+#    ~6 non-geometry parts (manifest/rels/origin/spec parts) measured per
+#    package. 900 keeps every batch at ~906 entries -- comfortable margin
+#    under 1000 -- while its data.json (dozens of MB even for heavier real
+#    psets) stays comfortably under the 100MB cap too.
+DEFAULT_BATCH_SIZE = 900
 
 # Above this, a written package is getting close to the ~100MB hard cap --
 # logged as an early warning at build time rather than discovered as a 500
@@ -74,15 +83,15 @@ def build_and_write_aasx(
     batches are named `model-0001.aasx`, `model-0002.aasx`, etc. Returns the
     list of paths written, in order.
 
-    Every solar-panel element (see export/aas/solar.py::is_solar_panel) gets
-    the full treatment (raw-pset TechnicalData, embedded geometry, an
-    `opcua` submodel with its 4 sensor Properties, a `timeseries`
-    descriptor); every other element gets a lean TechnicalData only. A
-    single virtual "Inverter" shell (no backing IfcElement) is added
-    carrying the plant's 3 AC output variables, the same way. If
-    `databridge_dir` is given and at least one panel/inverter variable was
-    produced, the DataBridge config bridging an external OPC UA server's
-    writes into these submodels is written there too."""
+    Every element gets Nameplate + full raw-pset TechnicalData + its own
+    embedded Model3DIFC geometry. Solar-panel elements (see
+    export/aas/solar.py::is_solar_panel) additionally get an `opcua`
+    submodel with their 4 sensor Properties and a `timeseries` descriptor;
+    so does a single virtual "Inverter" shell (no backing IfcElement) added
+    for the plant's 3 AC output variables. If `databridge_dir` is given and
+    at least one panel/inverter variable was produced, the DataBridge config
+    bridging an external OPC UA server's writes into these submodels is
+    written there too."""
     elements = list(elements if elements is not None else plant_model.by_type("IfcElement"))
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -138,17 +147,14 @@ def _write_batch(
         panel = is_solar_panel(entity)
         variables: Tuple[OpcuaVariable, ...] = PANEL_VARIABLES if panel else ()
 
-        technicaldata = build_technicaldata_submodel(entity) if panel else build_lean_technicaldata_submodel(entity)
-        if panel:
-            _attach_geometry(technicaldata, entity, file_store, used_file_names_lower)
+        # Every element gets full Nameplate + TechnicalData + its own
+        # embedded geometry now -- only opcua/timeseries stay scoped to
+        # elements with a real sensor reading behind them (see module
+        # docstring for why).
+        technicaldata = build_technicaldata_submodel(entity)
+        _attach_geometry(technicaldata, entity, file_store, used_file_names_lower)
 
-        # Nameplate is skipped for the lean tier: it's built from the same
-        # kind of heavy IDTA template as the full TechnicalData (see
-        # build_lean_technicaldata_submodel's docstring) and would be pure
-        # per-field overhead here -- lean TechnicalData's own Identification
-        # properties (Name/GlobalId/...) already cover what a non-panel
-        # element's Nameplate would have said anyway.
-        submodels = [build_nameplate_submodel(entity, namespace), technicaldata] if panel else [technicaldata]
+        submodels = [build_nameplate_submodel(entity, namespace), technicaldata]
         opcua_sm = None
         asset_tag = f"PANEL-{entity.Tag}"
         if entity.is_a() in _OPCUA_ELIGIBLE_CLASSES or variables:
