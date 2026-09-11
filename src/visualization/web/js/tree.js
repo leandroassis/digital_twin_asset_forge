@@ -76,10 +76,17 @@ export class BaSyxTreeComponent {
     }
 
     selectNode(nodeId) {
+        if (!nodeId) return;
         this.activeNodeId = nodeId;
         document.querySelectorAll('.tree-node-label.active').forEach(el => el.classList.remove('active'));
 
-        const targetNodeDiv = this.container.querySelector(`.tree-node[data-id="${nodeId}"]`);
+        const cleanId = nodeId.split('/').pop();
+        const allNodes = Array.from(this.container.querySelectorAll('.tree-node'));
+        const targetNodeDiv = allNodes.find(el => {
+            const id = el.dataset.id || '';
+            return id === nodeId || id === cleanId || id.endsWith('/' + cleanId) || id.endsWith(cleanId);
+        });
+
         if (targetNodeDiv) {
             const label = targetNodeDiv.querySelector('.tree-node-label');
             if (label) {

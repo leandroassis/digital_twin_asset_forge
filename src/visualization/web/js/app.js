@@ -1,7 +1,7 @@
-import { Viewer3D } from './viewer3d.js';
-import { BaSyxTreeComponent } from './tree.js';
-import { DashboardComponent } from './dashboard.js';
-import { AlertManager } from './alerts.js';
+import { Viewer3D } from './viewer3d.js?v=3';
+import { BaSyxTreeComponent } from './tree.js?v=3';
+import { DashboardComponent } from './dashboard.js?v=3';
+import { AlertManager } from './alerts.js?v=3';
 
 class AppController {
     constructor() {

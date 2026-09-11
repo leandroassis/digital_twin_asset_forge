@@ -45,6 +45,26 @@ def test_build_tree_from_basyx_mock():
         assert tree["type"] == "AASRepository"
         assert len(tree["children"]) == 2
 
+def test_build_tree_categorizes_solar_panels_separately_from_system_panels():
+    service = VisualizationBasyxService()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "result": [
+            {"id": "shell_solar", "idShort": "Solar_Panel_ZCB_1529520", "assetInformation": {"globalAssetId": "PV001"}},
+            {"id": "shell_glass", "idShort": "System_Panel_Glazed_1516153", "assetInformation": {"globalAssetId": "GLASS001"}},
+        ]
+    }
+
+    with patch.object(service._session, "get", return_value=mock_response):
+        tree = service.build_tree_from_basyx()
+        cat_names = [c["name"] for c in tree["children"]]
+        pv_cat = next(c for c in tree["children"] if "Painéis Fotovoltaicos" in c["name"])
+        pv_items = [item["name"] for item in pv_cat["children"]]
+        
+        assert "Solar_Panel_ZCB_1529520" in pv_items
+        assert "System_Panel_Glazed_1516153" not in pv_items
+
 def test_get_shell_by_global_id_uuid_conversion():
     service = VisualizationBasyxService()
     # UUID '872196f4-e2d8-4c51-86d3-d7ccaf742cae' maps to IFC GUID '278PRqujXCKORJryolT2ok'

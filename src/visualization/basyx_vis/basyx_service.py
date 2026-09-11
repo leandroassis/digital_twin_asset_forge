@@ -155,7 +155,7 @@ class VisualizationBasyxService:
             id_lower = id_short.lower()
             if "inverter" in id_lower or "inversor" in id_lower or "wechselrichter" in id_lower:
                 category_name = "Inversores (Inverters)"
-            elif "panel" in id_lower or "solar" in id_lower or "kt" in id_lower or "modul" in id_lower or "pv" in id_lower:
+            elif ("solar" in id_lower or "pv" in id_lower or "modul" in id_lower or "photovoltaic" in id_lower) and "system_panel" not in id_lower and "curtain_wall" not in id_lower:
                 category_name = "Painéis Fotovoltaicos (PV Modules)"
             elif "sensor" in id_lower or "temperatur" in id_lower or "meter" in id_lower:
                 category_name = "Sensores e Medidores (Sensors/Meters)"
