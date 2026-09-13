@@ -193,7 +193,7 @@ export class Viewer3D {
     _resolveAnchor(object) {
         let node = object;
         while (node && node !== this.currentModel) {
-            const id = node.userData.globalId || node.userData.GlobalId || node.userData.guid;
+            const id = node.userData?.globalId || node.userData?.GlobalId || node.userData?.guid;
             if (id) return node;
             if (node.name && !GENERATED_MESH_NAME_RE.test(node.name)) return node;
             node = node.parent;
@@ -203,7 +203,11 @@ export class Viewer3D {
 
     _resolveGlobalId(object) {
         const anchor = this._resolveAnchor(object);
-        return anchor.userData.globalId || anchor.userData.GlobalId || anchor.userData.guid || anchor.name;
+        const id = anchor.userData?.globalId || anchor.userData?.GlobalId || anchor.userData?.guid;
+        if (id) return id;
+        if (anchor.name && !GENERATED_MESH_NAME_RE.test(anchor.name)) return anchor.name;
+        if (anchor.userData?.name) return anchor.userData.name;
+        return anchor.name;
     }
 
     _onCanvasMouseMove(event) {
@@ -216,7 +220,7 @@ export class Viewer3D {
 
         if (intersects.length > 0 && intersects[0].object.isMesh) {
             const anchor = this._resolveAnchor(intersects[0].object);
-            const name = anchor.userData.name || this._resolveGlobalId(anchor) || 'Elemento 3D';
+            const name = anchor.userData?.name || this._resolveGlobalId(anchor) || 'Elemento 3D';
             this.tooltip.innerText = name;
             this.tooltip.style.left = `${event.clientX + 12}px`;
             this.tooltip.style.top = `${event.clientY + 12}px`;
@@ -268,20 +272,30 @@ export class Viewer3D {
         }
     }
 
-    // The left BaSyx tree passes a shell's full asset URI
-    // (".../asset/ifc/<GlobalId>" or ".../asset/virtual/<id>"); plant.glb's
-    // nodes -- and this.meshByGlobalIdMap, keyed off them via
-    // _resolveGlobalId -- use the bare id instead. An exact match already
-    // covers a direct 3D click (which passes the bare id straight through);
-    // falling back to the URI's last path segment is what lets a
-    // tree-driven selection find -- and center the camera on -- the right
-    // element too, not just fetch its metadata (which already tolerated
-    // either format server-side, see basyx_service.py::get_shell_by_global_id).
     _lookupMesh(globalId) {
+        if (!globalId) return null;
         if (this.meshByGlobalIdMap.has(globalId)) {
             return this.meshByGlobalIdMap.get(globalId);
         }
-        return this.meshByGlobalIdMap.get(globalId.split('/').pop());
+
+        const cleanId = globalId.split('/').pop();
+        if (this.meshByGlobalIdMap.has(cleanId)) {
+            return this.meshByGlobalIdMap.get(cleanId);
+        }
+
+        try {
+            const decoded = decodeURIComponent(cleanId);
+            if (this.meshByGlobalIdMap.has(decoded)) {
+                return this.meshByGlobalIdMap.get(decoded);
+            }
+        } catch (e) {}
+
+        for (const [key, obj] of this.meshByGlobalIdMap.entries()) {
+            if (key === cleanId || key.endsWith(cleanId) || (obj.userData && (obj.userData.name === cleanId || obj.userData.idShort === cleanId))) {
+                return obj;
+            }
+        }
+        return null;
     }
 
     setAlertState(globalId, alertType) {
