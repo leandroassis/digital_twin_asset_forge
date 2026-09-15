@@ -39,7 +39,7 @@ import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, NamedTuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import requests
 import typer
@@ -57,6 +57,50 @@ app = typer.Typer(add_completion=False)
 _ALL_TAG_SUFFIXES = tuple(
     sorted({v.tag_suffix for v in (*PANEL_VARIABLES, *INVERTER_VARIABLES)}, key=len, reverse=True)
 )
+
+
+# Plausible daytime operating ranges per variable, so `asset-forge model run`
+# sees a healthy field by default. Uniform noise inside a narrow band keeps
+# every panel's spatial z-score within +/-sqrt(3) ~ 1.73, below the model's
+# alert thresholds (config/rules.json) -- only injected faults stand out.
+_NORMAL_RANGES: Dict[str, Tuple[float, float]] = {
+    "LightIntensity": (850.0, 950.0),
+    "Temperature": (35.0, 45.0),
+    "CurrentDC": (8.0, 9.0),
+    "VoltageDC": (37.0, 39.0),
+    "VoltageAC": (375.0, 385.0),
+    "CurrentAC": (280.0, 300.0),
+    "PowerAC": (180_000.0, 200_000.0),
+}
+_FALLBACK_RANGE = (0.0, 100.0)
+
+# Injected panel faults (--faults): variable overridden -> out-of-band range,
+# each chosen to trip the matching rule in model/rules.py.
+_FAULT_RANGES: Dict[str, Tuple[str, Tuple[float, float]]] = {
+    "Sujeira": ("CurrentDC", (2.0, 3.0)),
+    "Sobreaquecimento": ("Temperature", (78.0, 82.0)),
+    "Sobrecorrente": ("CurrentDC", (20.0, 22.0)),
+}
+
+
+def pick_faulty_panels(targets: List["SensorTarget"], count: int, rng: random.Random) -> Dict[str, str]:
+    """Picks `count` distinct panel asset tags and assigns each a fault type,
+    cycling through `_FAULT_RANGES` so every type shows up."""
+    panel_tags = sorted({t.asset_tag for t in targets if t.asset_tag.startswith("PANEL-")})
+    chosen = rng.sample(panel_tags, min(count, len(panel_tags)))
+    fault_types = list(_FAULT_RANGES)
+    return {tag: fault_types[i % len(fault_types)] for i, tag in enumerate(chosen)}
+
+
+def synthetic_value(id_short: str, fault: Optional[str], rng: random.Random) -> float:
+    """A reading for `id_short`: its normal band, or the fault band when
+    `fault` targets this variable."""
+    low, high = _NORMAL_RANGES.get(id_short, _FALLBACK_RANGE)
+    if fault is not None:
+        fault_variable, fault_range = _FAULT_RANGES[fault]
+        if fault_variable == id_short:
+            low, high = fault_range
+    return round(rng.uniform(low, high), 2)
 
 
 class SensorTarget(NamedTuple):
@@ -117,12 +161,17 @@ def run(
     influx_token: str = typer.Option(config.INFLUXDB_TOKEN, "--influx-token"),
     interval: float = typer.Option(2.0, "--interval", help="seconds between write/read rounds"),
     once: bool = typer.Option(False, "--once", help="do one write+read round per target, then exit"),
+    faults: int = typer.Option(
+        0, "--faults", min=0, help="number of panels to keep in a fault state (Sujeira/Sobreaquecimento/Sobrecorrente)"
+    ),
+    seed: Optional[int] = typer.Option(None, "--seed", help="random seed, for a reproducible choice of faulty panels"),
 ) -> None:
     """Every `interval` seconds (or once, with --once): write a fresh
-    random value into every (submodel, Property) pair listed in
-    `aasserver_path`, read each one straight back from BaSyx to confirm it
-    matches, and historize the whole round into InfluxDB (one point per
-    asset, one field per variable)."""
+    synthetic value (inside a plausible operating range) into every
+    (submodel, Property) pair listed in `aasserver_path`, read each one
+    straight back from BaSyx to confirm it matches, and historize the whole
+    round into InfluxDB (one point per asset, one field per variable).
+    `--faults N` keeps N panels out of range for the anomaly model to catch."""
     targets = load_targets(aasserver_path)
     if not targets:
         typer.echo(f"no targets found in {aasserver_path} -- run `asset-forge convert --databridge` first", err=True)
@@ -131,6 +180,11 @@ def run(
         f"driving {len(targets)} sensor Properties against {host_aas_env}:{port_aas_env}, "
         f"historizing to {influx_host}:{influx_port}/{influx_bucket}"
     )
+
+    rng = random.Random(seed)
+    faulty_panels = pick_faulty_panels(targets, faults, rng)
+    for tag, fault in faulty_panels.items():
+        logger.info(f"injecting fault: {tag} -> {fault}")
 
     influx_client = InfluxDBClient(url=f"http://{influx_host}:{influx_port}", token=influx_token, org=influx_org)
     influx_write_api = influx_client.write_api(write_options=SYNCHRONOUS)
@@ -141,7 +195,7 @@ def run(
         points_by_asset: Dict[str, Point] = {}
 
         for target in targets:
-            value = round(random.uniform(0, 100), 2)
+            value = synthetic_value(target.id_short, faulty_panels.get(target.asset_tag), rng)
             try:
                 write_value(host_aas_env, port_aas_env, target, value)
                 readback = read_value(host_aas_env, port_aas_env, target)
