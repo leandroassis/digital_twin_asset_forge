@@ -25,7 +25,14 @@ script, com `src/data_gen` adicionado a `sys.path`.
 
 ## Como gerar dados e mandar pro BaSyx (fluxo principal)
 
-### 1. Gerar o perfil de cada painel
+`panel_profiles.csv` é um artefato gerado (reproduzível via `--seed`), não
+dado de origem — por isso **não é versionado** (ver `.gitignore`). O passo 1
+abaixo é opcional: se você pular direto pro passo 2 sem gerar o arquivo,
+`send_to_basyx.py` avisa e usa um perfil neutro (`irradiance_factor=1.0`,
+`temperature_offset=0.0`) pra todo painel automaticamente — o passo 1 só é
+necessário se você quiser perturbação/anomalia de propósito.
+
+### 1. Gerar o perfil de cada painel (opcional)
 
 ```powershell
 .venv\Scripts\python.exe src\data_gen\generate_profiles_cli.py --mode perturbed --seed 42
