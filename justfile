@@ -5,6 +5,7 @@ forge := venv / "bin" / "asset-forge"
 pytest := venv / "bin" / "pytest"
 
 namespace := env("ASSET_FORGE_NAMESPACE", "example.org/asset-forge")
+rules_config := env("RULES_CONFIG", "config/rules.json")
 
 # List available recipes
 default:
@@ -100,6 +101,11 @@ basyx-clear host="localhost" port="8081" registry_host="localhost" registry_port
 # Dummy sensor mock: writes+reads-back synthetic values into every opcua submodel Property (see mock_sensor.py). Add --once for a single round instead of looping.
 mock-sensor *args:
     {{forge}} mock-sensor run {{args}}
+
+# Run the Z-Score AI Anomaly Detection model against InfluxDB and sync alerts with the 3D visualizer
+# (`just run-ai --once`; another rules file via RULES_CONFIG=... or `--config PATH`)
+run-ai *args:
+    {{forge}} model run --config {{rules_config}} {{args}}
 
 # Run the full test suite (unit + integration; integration runs against the real assets/ files)
 test:

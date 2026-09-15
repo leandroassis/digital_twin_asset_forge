@@ -1,16 +1,22 @@
+const ALERT_POLL_INTERVAL_MS = 5000;
+
 export class AlertManager {
     constructor(viewer3d, onAlertClickedCallback) {
         this.viewer3d = viewer3d;
         this.onAlertClicked = onAlertClickedCallback;
         this.alertsList = document.getElementById('active-alerts-list');
         this.alertBadge = document.getElementById('alert-count-badge');
-        
+
         this.activeAlertsMap = new Map();
-        
+        this.paintedAlerts = new Map();
+        this.paintedModelVersion = null;
+        this.lastListSignature = null;
+
         // Expor a função global para os botões HTML de simulação
         window.triggerSimulatedAlert = (errorType) => this.triggerSimulation(errorType);
 
         this.fetchAlerts();
+        setInterval(() => this.fetchAlerts(), ALERT_POLL_INTERVAL_MS);
     }
 
     async fetchAlerts() {
@@ -26,13 +32,18 @@ export class AlertManager {
     }
 
     renderAlerts(alertsList) {
-        if (!this.alertsList) return;
-        this.alertsList.innerHTML = '';
-        this.activeAlertsMap.clear();
+        this.activeAlertsMap = new Map(alertsList.map(alert => [alert.element_id, alert]));
+        this._syncSceneAlerts();
+
+        const signature = JSON.stringify(alertsList);
+        if (signature === this.lastListSignature) return;
+        this.lastListSignature = signature;
 
         if (this.alertBadge) {
             this.alertBadge.innerText = alertsList.length;
         }
+        if (!this.alertsList) return;
+        this.alertsList.innerHTML = '';
 
         if (alertsList.length === 0) {
             this.alertsList.innerHTML = `<div class="empty-state">Nenhum alerta de anomalia ativo</div>`;
@@ -40,24 +51,20 @@ export class AlertManager {
         }
 
         alertsList.forEach(alert => {
-            this.activeAlertsMap.set(alert.element_id, alert);
-            
-            // Aplicar cor de alerta na cena 3D
-            if (this.viewer3d) {
-                this.viewer3d.setAlertState(alert.element_id, alert.error_type);
-            }
-
             const card = document.createElement('div');
             card.className = `alert-card ${alert.error_type === 'Sujeira' ? 'warning' : ''}`;
-            
+
             const icon = alert.error_type === 'Sobreaquecimento' ? '🔥' :
                          alert.error_type === 'Sujeira' ? '🧹' :
                          alert.error_type === 'Sobrecorrente' ? '⚡' : '🌙';
 
-            card.innerHTML = `
-                <div class="alert-card-title">${icon} ${alert.error_type}: ${alert.element_id}</div>
-                <div class="alert-card-msg">${alert.message}</div>
-            `;
+            const title = document.createElement('div');
+            title.className = 'alert-card-title';
+            title.textContent = `${icon} ${alert.error_type}: ${alert.element_id}`;
+            const msg = document.createElement('div');
+            msg.className = 'alert-card-msg';
+            msg.textContent = alert.message;
+            card.append(title, msg);
 
             card.addEventListener('click', () => {
                 if (this.onAlertClicked) {
@@ -67,6 +74,29 @@ export class AlertManager {
 
             this.alertsList.appendChild(card);
         });
+    }
+
+    _syncSceneAlerts() {
+        if (!this.viewer3d) return;
+
+        if (this.paintedModelVersion !== this.viewer3d.modelVersion) {
+            this.paintedAlerts.clear();
+            this.paintedModelVersion = this.viewer3d.modelVersion;
+        }
+
+        for (const elementId of [...this.paintedAlerts.keys()]) {
+            if (!this.activeAlertsMap.has(elementId)) {
+                this.viewer3d.clearAlertState(elementId);
+                this.paintedAlerts.delete(elementId);
+            }
+        }
+
+        for (const [elementId, alert] of this.activeAlertsMap) {
+            if (this.paintedAlerts.get(elementId) === alert.error_type) continue;
+            if (this.viewer3d.setAlertState(elementId, alert.error_type)) {
+                this.paintedAlerts.set(elementId, alert.error_type);
+            }
+        }
     }
 
     async triggerSimulation(errorType) {

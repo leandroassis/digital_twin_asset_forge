@@ -1,0 +1,16 @@
+{
+  "description": "Limiares e regras de detecção de anomalias espaciais (Z-Score) e limites de segurança física",
+  "night_detection": {
+    "night_lux_threshold": 50.0,
+    "night_current_threshold": 0.1
+  },
+  "statistical_z_scores": {
+    "z_score_dirt": -2.5,
+    "z_score_overheat": 2.5,
+    "z_score_overcurrent": 3.0
+  },
+  "safety_limits": {
+    "max_safe_temperature_c": 75.0,
+    "max_safe_current_a": 16.0
+  }
+}
