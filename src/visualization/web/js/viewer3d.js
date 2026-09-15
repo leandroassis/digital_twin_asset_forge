@@ -48,6 +48,7 @@ export class Viewer3D {
         this.originalMaterialsMap = new Map();
         this.meshByGlobalIdMap = new Map();
         this.alertStatesMap = new Map();
+        this.modelVersion = 0;
         this._cameraTransition = null;
 
         this._initScene();
@@ -116,7 +117,10 @@ export class Viewer3D {
             (gltf) => {
                 this.currentModel = gltf.scene;
                 this.scene.add(this.currentModel);
+                this.selectedAnchor = null;
+                this.alertStatesMap.clear();
                 this._indexElements();
+                this.modelVersion++;
 
                 // Centralizar a câmera automaticamente no modelo
                 this.resetCamera();
@@ -241,8 +245,8 @@ export class Viewer3D {
 
     _restoreMaterial(anchor) {
         const alertType = this.alertStatesMap.get(this._resolveGlobalId(anchor));
-        if (alertType && this.materials[alertType]) {
-            this._applyMaterial(anchor, this.materials[alertType]);
+        if (alertType) {
+            this._applyMaterial(anchor, this._alertMaterial(alertType));
             return;
         }
         anchor.traverse((obj) => {
@@ -298,29 +302,35 @@ export class Viewer3D {
         return null;
     }
 
+    // Retorna true se o elemento foi encontrado na cena e pintado -- false
+    // enquanto o GLB ainda não carregou (quem chama tenta de novo depois).
     setAlertState(globalId, alertType) {
         const anchor = this._lookupMesh(globalId);
-        if (anchor) {
-            this.alertStatesMap.set(this._resolveGlobalId(anchor), alertType);
-            let mat = this.materials.alertOverheat;
-            if (alertType === 'Sujeira') mat = this.materials.alertDirt;
-            if (alertType === 'Sobrecorrente') mat = this.materials.alertOvercurrent;
-            if (alertType === 'Noite') mat = this.materials.alertNight;
+        if (!anchor) return false;
 
-            this._applyMaterial(anchor, mat);
+        this.alertStatesMap.set(this._resolveGlobalId(anchor), alertType);
+        // O elemento selecionado mantém o destaque de seleção; o alerta volta
+        // a aparecer via _restoreMaterial quando a seleção mudar.
+        if (anchor !== this.selectedAnchor) {
+            this._applyMaterial(anchor, this._alertMaterial(alertType));
         }
+        return true;
+    }
+
+    _alertMaterial(alertType) {
+        if (alertType === 'Sujeira') return this.materials.alertDirt;
+        if (alertType === 'Sobrecorrente') return this.materials.alertOvercurrent;
+        if (alertType === 'Noite') return this.materials.alertNight;
+        return this.materials.alertOverheat;
     }
 
     clearAlertState(globalId) {
         const anchor = this._lookupMesh(globalId);
-        if (anchor) {
-            this.alertStatesMap.delete(this._resolveGlobalId(anchor));
-            anchor.traverse((obj) => {
-                if (obj.isMesh) {
-                    const origMat = this.originalMaterialsMap.get(obj.uuid);
-                    if (origMat) obj.material = origMat;
-                }
-            });
+        if (!anchor) return;
+
+        this.alertStatesMap.delete(this._resolveGlobalId(anchor));
+        if (anchor !== this.selectedAnchor) {
+            this._restoreMaterial(anchor);
         }
     }
 
