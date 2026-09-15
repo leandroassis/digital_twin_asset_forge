@@ -2,7 +2,6 @@
 
 import base64
 import json
-import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -12,7 +11,9 @@ from loguru import logger
 from asset_forge import config
 from model.detector import PanelReading
 
-_B64_PAD_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_UNIQUE_ID_PREFIXES = ("aas-", "opcua-")
+
+_REQUIRED_FIELDS = ("LightIntensity", "Temperature", "CurrentDC")
 
 
 def _decode_b64url(s: str) -> str:
@@ -39,10 +40,12 @@ def load_tag_to_global_id_map(aasserver_path: Optional[Path] = None) -> Dict[str
     try:
         entries = json.loads(path.read_text(encoding="utf-8"))
         for entry in entries:
-            # uniqueId e.g. "opcua-PANEL-1529520-LUX" -> asset_tag: "PANEL-1529520"
+            # uniqueId e.g. "aas-PANEL-1529520-LUX" -> asset_tag: "PANEL-1529520"
             raw_id = entry.get("uniqueId", "")
-            if raw_id.startswith("opcua-"):
-                raw_id = raw_id[len("opcua-") :]
+            for prefix in _UNIQUE_ID_PREFIXES:
+                if raw_id.startswith(prefix):
+                    raw_id = raw_id[len(prefix) :]
+                    break
             asset_tag = raw_id.rsplit("-", 1)[0] if "-" in raw_id else raw_id
 
             # submodelEndpoint e.g. ".../submodels/aHR0cHM6Ly9leGFtcGxlLm9yZy9hc3NldC1mb3JnZS9hYXMvaWZjLzJR.../..."
@@ -73,10 +76,6 @@ def fetch_latest_readings_from_influx(
 
     Executes a single high-performance Flux query, aggregating all metrics per panel.
     """
-    tag_map = tag_to_global_id or {}
-    client = InfluxDBClient(url=f"http://{influx_host}:{influx_port}", token=influx_token, org=influx_org)
-    query_api = client.query_api()
-
     # Flux query: retrieve only the latest readings across all sensor fields
     flux = f"""
     from(bucket: "{influx_bucket}")
@@ -86,7 +85,10 @@ def fetch_latest_readings_from_influx(
     """
 
     try:
-        tables = query_api.query(flux)
+        with InfluxDBClient(
+            url=f"http://{influx_host}:{influx_port}", token=influx_token, org=influx_org
+        ) as client:
+            tables = client.query_api().query(flux)
     except Exception as exc:
         logger.error(f"Error querying InfluxDB ({influx_host}:{influx_port}): {exc}")
         return []
@@ -99,25 +101,48 @@ def fetch_latest_readings_from_influx(
             if not asset_tag or asset_tag == "INVERTER":
                 continue  # Panel-level anomaly detection focuses on PV modules
 
-            field = record.get_field()
-            value = float(record.get_value() or 0.0)
+            value = record.get_value()
+            if value is None:
+                continue
+            data_by_asset.setdefault(asset_tag, {})[record.get_field()] = float(value)
 
-            if asset_tag not in data_by_asset:
-                data_by_asset[asset_tag] = {}
-            data_by_asset[asset_tag][field] = value
+    return build_panel_readings(data_by_asset, tag_to_global_id)
 
+
+def build_panel_readings(
+    data_by_asset: Dict[str, Dict[str, float]],
+    tag_to_global_id: Optional[Dict[str, str]] = None,
+) -> List[PanelReading]:
+    """Turns `{asset_tag: {field: value}}` into `PanelReading`s, resolving each
+    tag to its IFC GlobalId and skipping panels with incomplete readings."""
+    tag_map = tag_to_global_id or {}
     readings: List[PanelReading] = []
+    skipped: List[str] = []
+
     for asset_tag, fields in data_by_asset.items():
-        global_id = tag_map.get(asset_tag, asset_tag)
+        if any(name not in fields for name in _REQUIRED_FIELDS):
+            skipped.append(asset_tag)
+            continue
+
+        global_id = tag_map.get(asset_tag)
+        if global_id is None:
+            logger.debug(f"No GlobalId mapping for {asset_tag}; alert will use the raw tag")
+            global_id = asset_tag
         readings.append(
             PanelReading(
                 asset_tag=asset_tag,
                 global_id=global_id,
-                light_intensity=fields.get("LightIntensity", 0.0),
-                temperature=fields.get("Temperature", 0.0),
-                current_dc=fields.get("CurrentDC", 0.0),
+                light_intensity=fields["LightIntensity"],
+                temperature=fields["Temperature"],
+                current_dc=fields["CurrentDC"],
                 voltage_dc=fields.get("VoltageDC", 0.0),
             )
+        )
+
+    if skipped:
+        logger.warning(
+            f"Skipped {len(skipped)} panel(s) with incomplete readings "
+            f"(missing one of {', '.join(_REQUIRED_FIELDS)}): {', '.join(skipped[:5])}"
         )
 
     return readings

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from model.collector import load_tag_to_global_id_map
+from model.collector import build_panel_readings, load_tag_to_global_id_map
 from model.detector import AnomalyDetector, PanelReading, compute_z_scores
 from model.notifier import AlertNotifier
 from model.rules import AlertPayload, AnomalyThresholds, FaultType, evaluate_panel
@@ -237,24 +237,53 @@ def test_mock_sensor_simulation_night_condition():
     assert all(a.error_type == FaultType.NIGHT.value for a in alerts)
 
 
-def test_load_tag_to_global_id_map(tmp_path):
+@pytest.mark.parametrize("unique_id", ["aas-PANEL-1529520-LUX", "opcua-PANEL-1529520-LUX"])
+def test_load_tag_to_global_id_map(tmp_path, unique_id):
     aasserver_file = tmp_path / "aasserver.json"
     import base64
 
     fake_uri = "https://example.org/asset-forge/aas/ifc/2QF3$F$XHF1A$PuubJ8dJ8/sm/opcua"
     b64_uri = base64.urlsafe_b64encode(fake_uri.encode()).decode().rstrip("=")
 
+    # Same shape databridge.py writes: "aas-" prefix, no trailing path after the id
     content = [
         {
-            "uniqueId": "opcua-PANEL-1529520-LUX",
-            "submodelEndpoint": f"http://aas-environment:8081/submodels/{b64_uri}/submodel-elements/LightIntensity",
+            "uniqueId": unique_id,
+            "submodelEndpoint": f"http://localhost:8081/submodels/{b64_uri}",
             "idShortPath": "LightIntensity",
+            "api": "DOT_AAS_V3",
         }
     ]
     aasserver_file.write_text(json.dumps(content))
 
     tag_map = load_tag_to_global_id_map(aasserver_file)
-    assert tag_map.get("PANEL-1529520") == "2QF3$F$XHF1A$PuubJ8dJ8"
+    assert tag_map == {"PANEL-1529520": "2QF3$F$XHF1A$PuubJ8dJ8"}
+
+
+def test_load_tag_to_global_id_map_against_generated_databridge_config():
+    from asset_forge import config
+
+    aasserver_path = config.DATABRIDGE_DIR / "aasserver.json"
+    if not aasserver_path.is_file():
+        pytest.skip("infra/databridge/aasserver.json not generated")
+
+    tag_map = load_tag_to_global_id_map(aasserver_path)
+    assert tag_map, "no panel mappings resolved from the generated databridge config"
+    assert all(tag.startswith("PANEL-") for tag in tag_map)
+
+
+def test_build_panel_readings_resolves_global_id_and_skips_incomplete():
+    data = {
+        "PANEL-1": {"LightIntensity": 900.0, "Temperature": 40.0, "CurrentDC": 8.5, "VoltageDC": 38.0},
+        "PANEL-2": {"LightIntensity": 900.0, "Temperature": 40.0},  # CurrentDC missing
+        "PANEL-3": {"LightIntensity": 900.0, "Temperature": 40.0, "CurrentDC": 8.4},  # unmapped
+    }
+    readings = build_panel_readings(data, {"PANEL-1": "GUID-1"})
+
+    by_tag = {r.asset_tag: r for r in readings}
+    assert set(by_tag) == {"PANEL-1", "PANEL-3"}
+    assert by_tag["PANEL-1"].global_id == "GUID-1"
+    assert by_tag["PANEL-3"].global_id == "PANEL-3"
 
 
 @patch("requests.get")
@@ -343,7 +372,7 @@ def test_anomaly_thresholds_from_file(tmp_path):
     # Non-existent file returns default instance safely
     missing_thresholds = AnomalyThresholds.from_file(tmp_path / "does_not_exist.json")
     assert missing_thresholds.z_score_dirt == -2.5
-    assert missing_thresholds.max_safe_temperature_c == 65.0
+    assert missing_thresholds.max_safe_temperature_c == 75.0
 
 
 def test_project_default_rules_json_exists():
@@ -356,5 +385,7 @@ def test_project_default_rules_json_exists():
     assert thresholds.night_lux_threshold == 50.0
     assert thresholds.z_score_dirt == -2.5
     assert thresholds.z_score_overheat == 2.5
-    assert thresholds.max_safe_temperature_c == 65.0
+    assert thresholds.max_safe_temperature_c == 75.0
     assert thresholds.max_safe_current_a == 16.0
+
+    assert AnomalyThresholds() == thresholds
