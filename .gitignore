@@ -40,3 +40,6 @@ build/
 
 #data
 *.ifc
+
+# Generated (seed-reproducible) per-panel simulation profile, not source data
+src/data_gen/dataset/panel_profiles.csv
