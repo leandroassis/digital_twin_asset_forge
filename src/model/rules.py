@@ -41,7 +41,7 @@ class AnomalyThresholds:
     z_score_overcurrent: float = 3.0  # DC current Z-Score above this value indicates abnormal overcurrent
 
     # 3. Absolute Hard Safety Limits
-    max_safe_temperature_c: float = 65.0  # Temperature (°C) above which overheating alert is unconditionally raised
+    max_safe_temperature_c: float = 75.0  # Temperature (°C) above which overheating alert is unconditionally raised (matches config/rules.json)
     max_safe_current_a: float = 16.0  # DC current (A) above which overcurrent alert is unconditionally raised
 
     def to_dict(self) -> Dict[str, float]:
