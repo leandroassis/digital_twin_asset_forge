@@ -103,8 +103,9 @@ mock-sensor *args:
     {{forge}} mock-sensor run {{args}}
 
 # Run the Z-Score AI Anomaly Detection model against InfluxDB and sync alerts with the 3D visualizer
-run-ai config=rules_config *args:
-    {{forge}} model run --config {{config}} {{args}}
+# (`just run-ai --once`; another rules file via RULES_CONFIG=... or `--config PATH`)
+run-ai *args:
+    {{forge}} model run --config {{rules_config}} {{args}}
 
 # Run the full test suite (unit + integration; integration runs against the real assets/ files)
 test:
