@@ -51,9 +51,34 @@ export class Viewer3D {
         this.modelVersion = 0;
         this._cameraTransition = null;
 
-        this._initScene();
-        this._initRaycaster();
-        this._animate();
+        // WebGL isn't guaranteed everywhere (sandboxed browsers, remote
+        // desktops/VMs without GPU passthrough, etc. -- confirmed live:
+        // THREE.WebGLRenderer throws synchronously here in exactly that
+        // case). None of the rest of the app -- the BaSyx tree, metadata,
+        // telemetry, alerts -- has anything to do with 3D, so a failure
+        // here must not take down AppController's whole constructor with
+        // it; `available` gates every other method below instead.
+        this.available = false;
+        try {
+            this._initScene();
+            this._initRaycaster();
+            this.available = true;
+            this._animate();
+        } catch (exc) {
+            console.error('Viewer3D: WebGL indisponível neste navegador -- visualização 3D desativada:', exc);
+            this._showUnavailableMessage();
+        }
+    }
+
+    _showUnavailableMessage() {
+        if (this.canvas) this.canvas.style.display = 'none';
+        const container = this.canvas?.parentElement;
+        if (!container || container.querySelector('.webgl-unavailable')) return;
+        const message = document.createElement('div');
+        message.className = 'webgl-unavailable';
+        message.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;color:#8b95a1;padding:2rem;text-align:center;';
+        message.innerText = 'Visualização 3D indisponível (sem suporte a WebGL neste navegador) -- a árvore de ativos, metadados e alertas continuam funcionando normalmente.';
+        container.appendChild(message);
     }
 
     _initScene() {
@@ -102,7 +127,7 @@ export class Viewer3D {
     }
 
     loadModel(glbUrl) {
-        if (!glbUrl) return;
+        if (!this.available || !glbUrl) return;
 
         // Limpar cena anterior
         if (this.currentModel) {
@@ -259,16 +284,20 @@ export class Viewer3D {
     selectElement(globalId, notifyCallback = false) {
         if (!globalId) return;
 
-        // Restaurar material anterior se não estiver em alerta
-        if (this.selectedAnchor) {
-            this._restoreMaterial(this.selectedAnchor);
-        }
+        // Sem WebGL não há malha pra destacar/focar, mas quem chamou (a
+        // árvore, os alertas) ainda precisa do callback de metadados/
+        // telemetria abaixo -- só a parte 3D fica de fora.
+        if (this.available) {
+            if (this.selectedAnchor) {
+                this._restoreMaterial(this.selectedAnchor);
+            }
 
-        const targetAnchor = this._lookupMesh(globalId);
-        if (targetAnchor) {
-            this.selectedAnchor = targetAnchor;
-            this._applyMaterial(targetAnchor, this.materials.selected);
-            this.focusCameraOnMesh(targetAnchor);
+            const targetAnchor = this._lookupMesh(globalId);
+            if (targetAnchor) {
+                this.selectedAnchor = targetAnchor;
+                this._applyMaterial(targetAnchor, this.materials.selected);
+                this.focusCameraOnMesh(targetAnchor);
+            }
         }
 
         if (notifyCallback && this.onElementSelected) {
@@ -305,6 +334,7 @@ export class Viewer3D {
     // Retorna true se o elemento foi encontrado na cena e pintado -- false
     // enquanto o GLB ainda não carregou (quem chama tenta de novo depois).
     setAlertState(globalId, alertType) {
+        if (!this.available) return false;
         const anchor = this._lookupMesh(globalId);
         if (!anchor) return false;
 
@@ -325,6 +355,7 @@ export class Viewer3D {
     }
 
     clearAlertState(globalId) {
+        if (!this.available) return;
         const anchor = this._lookupMesh(globalId);
         if (!anchor) return;
 
@@ -378,7 +409,7 @@ export class Viewer3D {
     }
 
     resetCamera() {
-        if (!this.currentModel) return;
+        if (!this.available || !this.currentModel) return;
         const box = new THREE.Box3().setFromObject(this.currentModel);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());

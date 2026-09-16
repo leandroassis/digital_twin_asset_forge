@@ -31,6 +31,12 @@ def run(
     ),
     host_aas_env: str = typer.Option(config.AAS_ENV_HOST, "--host-aas-env"),
     port_aas_env: int = typer.Option(config.AAS_ENV_PORT, "--port-aas-env"),
+    max_workers: int = typer.Option(
+        16,
+        "--max-workers",
+        help="concurrent history-api reads per evaluation round -- shrinks the sweep window "
+        "against a live sensor driver writing new rounds concurrently (1 = fully sequential)",
+    ),
     # Configurable Anomaly Thresholds (opcionais; sobrescrevem o arquivo de configuração se fornecidos)
     z_dirt: Optional[float] = typer.Option(None, "--z-dirt", help="Override: Current Z-Score threshold for Dirt (negative)"),
     z_overheat: Optional[float] = typer.Option(None, "--z-overheat", help="Override: Temperature Z-Score threshold for Overheating"),
@@ -78,7 +84,13 @@ def run(
 
     detector = AnomalyDetector(thresholds=thresholds)
     notifier = AlertNotifier(viz_base_url=viz_url)
+
+    # Pool sized to max_workers so the concurrent history-api reads each
+    # round actually get to reuse a connection instead of contending over
+    # requests' default (10-connection) pool.
     session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=max_workers, pool_maxsize=max_workers)
+    session.mount("http://", adapter)
 
     logger.info(f"Resolvendo alvos de timeseries via BaSyx ({host_aas_env}:{port_aas_env})...")
     targets = resolve_timeseries_targets(host_aas_env, port_aas_env, session=session)
@@ -97,7 +109,7 @@ def run(
                     logger.info(f"Arquivo {config_file} alterado! Novas regras carregadas e reaplicadas com sucesso.")
             except OSError:
                 pass
-        readings = fetch_latest_readings(targets, session=session)
+        readings = fetch_latest_readings(targets, session=session, max_workers=max_workers)
 
         if not readings:
             logger.warning("Nenhuma leitura encontrada via BaSyx/history-api. Aguardando dados de telemetria...")

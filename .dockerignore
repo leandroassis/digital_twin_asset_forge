@@ -1,0 +1,26 @@
+# Every Dockerfile under infra/ builds with `context: ..` (repo root) --
+# none of them COPY assets/ or .venv (data-gen/visualization mount what
+# they need as runtime volumes instead, see infra/docker-compose.apps.yml),
+# so excluding these keeps the build context transfer fast instead of
+# shipping hundreds of MB of generated output / the host venv on every
+# build.
+.git
+.venv
+venv
+env
+
+assets/*/output/
+*.ifc
+*.aasx
+*.glb
+
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+
+.claude
+.vscode
+.idea

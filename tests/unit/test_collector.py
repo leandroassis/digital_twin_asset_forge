@@ -55,3 +55,25 @@ def test_fetch_latest_readings_skips_targets_whose_history_api_is_unreachable():
 
 def test_fetch_latest_readings_with_no_targets_returns_empty():
     assert fetch_latest_readings([], session=MagicMock()) == []
+
+
+def test_fetch_latest_readings_fetches_every_panel_concurrently():
+    targets = [
+        TimeseriesTarget(f"PANEL-{i}", f"GUID-{i}", "http://localhost:8090", f"PANEL-{i}") for i in range(50)
+    ]
+
+    session = MagicMock()
+    session.get.return_value = _response(
+        {
+            "LightIntensity": [{"time": "t0", "value": 900.0}],
+            "Temperature": [{"time": "t0", "value": 40.0}],
+            "CurrentDC": [{"time": "t0", "value": 8.5}],
+            "VoltageDC": [{"time": "t0", "value": 38.0}],
+        }
+    )
+
+    readings = fetch_latest_readings(targets, session=session, max_workers=8)
+
+    assert len(readings) == 50
+    assert session.get.call_count == 50
+    assert {r.asset_tag for r in readings} == {t.asset_tag for t in targets}

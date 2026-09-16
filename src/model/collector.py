@@ -11,7 +11,8 @@ evaluation round: that config is static BaSyx state for the lifetime of a
 `model run` process, and re-enumerating every shell in the plant (~10k for
 solar-plant) on every round would be pure overhead."""
 
-from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Optional, Tuple
 
 import requests
 from loguru import logger
@@ -22,37 +23,54 @@ from model.detector import PanelReading
 _REQUIRED_FIELDS = ("LightIntensity", "Temperature", "CurrentDC")
 
 
+def _fetch_one(
+    session: requests.Session, target: TimeseriesTarget
+) -> Tuple[TimeseriesTarget, Optional[Dict[str, float]]]:
+    try:
+        resp = session.get(f"{target.endpoint.rstrip('/')}/series/{target.query}", params={"count": 1}, timeout=5)
+        resp.raise_for_status()
+        series = resp.json()
+    except requests.RequestException as exc:
+        logger.warning(f"history-api unreachable for {target.asset_tag} ({target.endpoint}): {exc}")
+        return target, None
+
+    fields = {name: points[-1]["value"] for name, points in series.items() if points}
+    return target, (fields or None)
+
+
 def fetch_latest_readings(
     targets: List[TimeseriesTarget],
     session: Optional[requests.Session] = None,
+    max_workers: int = 16,
 ) -> List[PanelReading]:
     """Fetches each target's single latest reading per variable from the
     history-api endpoint it points at (skipping the virtual inverter --
     panel-level anomaly detection focuses on PV modules). `targets` is
-    typically resolved once at startup via `resolve_timeseries_targets`."""
+    typically resolved once at startup via `resolve_timeseries_targets`.
+
+    Fetches run concurrently (thread pool, default 16 workers): a real
+    sensor driver (e.g. src/data_gen/send_to_basyx.py) keeps writing fresh
+    rounds continuously while this sweeps every panel, so a slow, fully
+    sequential sweep of ~600+ panels risks reading a torn mix of two
+    different rounds across the sweep -- confirmed live: with 607 panels
+    read one at a time, a handful queried late in the sweep already
+    reflected the next round's values, showing up as spurious Z-score
+    outliers against the rest. A short, concurrent sweep shrinks that
+    window; it doesn't eliminate it (there's no cross-panel snapshot
+    isolation in this design), but the tighter the sweep, the smaller the
+    chance any one round change lands mid-sweep.
+    """
     session = session or requests.Session()
 
     data_by_asset: Dict[str, Dict[str, float]] = {}
     global_id_by_asset: Dict[str, str] = {}
 
-    for target in targets:
-        if target.asset_tag == "INVERTER":
-            continue
-
-        try:
-            resp = session.get(
-                f"{target.endpoint.rstrip('/')}/series/{target.query}", params={"count": 1}, timeout=5
-            )
-            resp.raise_for_status()
-            series = resp.json()
-        except requests.RequestException as exc:
-            logger.warning(f"history-api unreachable for {target.asset_tag} ({target.endpoint}): {exc}")
-            continue
-
-        fields = {name: points[-1]["value"] for name, points in series.items() if points}
-        if fields:
-            data_by_asset[target.asset_tag] = fields
-            global_id_by_asset[target.asset_tag] = target.global_id
+    targets_to_fetch = [target for target in targets if target.asset_tag != "INVERTER"]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for target, fields in executor.map(lambda t: _fetch_one(session, t), targets_to_fetch):
+            if fields:
+                data_by_asset[target.asset_tag] = fields
+                global_id_by_asset[target.asset_tag] = target.global_id
 
     return build_panel_readings(data_by_asset, global_id_by_asset)
 
