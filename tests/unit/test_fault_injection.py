@@ -4,11 +4,15 @@ import sys
 import pytest
 
 
-SRC_DIR = Path(__file__).resolve().parent.parent.parent / "src"
-sys.path.append(str(SRC_DIR))
+DATA_GEN_DIR = (
+    Path(__file__).resolve().parent.parent.parent
+    / "src"
+    / "data_gen"
+)
 
-from data_gen.fault_injection import apply_fault
+sys.path.append(str(DATA_GEN_DIR))
 
+from fault_injection import apply_fault
 
 @pytest.fixture
 def normal_measurements():
@@ -17,7 +21,6 @@ def normal_measurements():
         "Temperature": 45.0,
         "CurrentDC": 12.0,
         "VoltageDC": 40.0,
-        "PowerDC": 480.0,
     }
 
 
@@ -40,7 +43,6 @@ def test_overcurrent_increases_current(normal_measurements):
     result = apply_fault(normal_measurements, "Sobrecorrente")
 
     assert result["CurrentDC"] == pytest.approx(18.0)
-    assert result["PowerDC"] == pytest.approx(720.0)
 
 
 def test_dirt_reduces_electrical_production(normal_measurements):
@@ -49,7 +51,6 @@ def test_dirt_reduces_electrical_production(normal_measurements):
     assert result["LightIntensity"] == 800.0
     assert result["CurrentDC"] == pytest.approx(3.6)
     assert result["VoltageDC"] == pytest.approx(38.0)
-    assert result["PowerDC"] == pytest.approx(136.8)
 
 
 def test_night_zeros_generation(normal_measurements):
@@ -58,7 +59,6 @@ def test_night_zeros_generation(normal_measurements):
     assert result["LightIntensity"] == 0.0
     assert result["CurrentDC"] == 0.0
     assert result["VoltageDC"] == 0.0
-    assert result["PowerDC"] == 0.0
 
 
 def test_unknown_fault_is_rejected(normal_measurements):

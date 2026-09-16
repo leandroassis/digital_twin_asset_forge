@@ -37,6 +37,12 @@ from model_pv import PVParameters, maximum_power_point
 from perturbation import generate_profiles
 from send_data_to_OPCUA import interpolate_dataset
 
+from fault_client import (
+    fetch_active_faults,
+    global_id_from_submodel_id_b64,
+)
+from fault_injection import apply_fault
+
 app = typer.Typer(add_completion=False)
 
 PANEL_ID_SHORTS = {variable.id_short for variable in PANEL_VARIABLES}
@@ -101,7 +107,6 @@ def panel_reading(
         "VoltageDC": point.voltage_v,
     }
 
-
 def _group_by_panel(targets: List[SensorTarget]) -> Dict[str, List[SensorTarget]]:
     """Group opcua Property targets by panel asset tag, panels only.
 
@@ -122,6 +127,25 @@ def _group_by_panel(targets: List[SensorTarget]) -> Dict[str, List[SensorTarget]
             groups.setdefault(target.asset_tag, []).append(target)
     return groups
 
+def _global_ids_by_panel(
+    panels: Dict[str, List[SensorTarget]],
+) -> Dict[str, str]:
+    """Relaciona PANEL-Tag ao GlobalId utilizado pela interface 3D."""
+
+    result: Dict[str, str] = {}
+
+    for asset_tag, targets in panels.items():
+        if not targets:
+            continue
+
+        global_id = global_id_from_submodel_id_b64(
+            targets[0].submodel_id_b64
+        )
+
+        if global_id is not None:
+            result[asset_tag] = global_id
+
+    return result
 
 class _WriteResult(NamedTuple):
     """Outcome of one write_value + read_value pair against BaSyx."""
@@ -187,6 +211,11 @@ def run(
         help="concurrent write+read-back pairs against BaSyx (1 = sequential); "
         "tune up based on what your machine/network/BaSyx instance can take",
     ),
+    viz_url: str = typer.Option(
+    "http://localhost:8000",
+    "--viz-url",
+    help="Base URL da API do visualizador",
+    ),
 ) -> None:
     """Simulate the plant forward in time, writing each panel's derived
     readings into BaSyx and historizing them into InfluxDB, one round per
@@ -230,6 +259,7 @@ def run(
     """
     targets = load_targets(aasserver_path)
     panels = _group_by_panel(targets)
+    panel_global_ids = _global_ids_by_panel(panels)
     if not panels:
         typer.echo(f"no PANEL- targets found in {aasserver_path}", err=True)
         raise typer.Exit(code=1)
@@ -273,6 +303,11 @@ def run(
             logger.info("fim do dataset; simulacao encerrada")
             break
 
+        active_faults = fetch_active_faults(
+            viz_url,
+            session=session,
+        )
+
         # Compute every panel's reading up front (pure, in-process, cheap)
         # so the thread pool only ever does network I/O.
         tasks = []
@@ -287,6 +322,16 @@ def run(
             reading = panel_reading(
                 base_irradiance, base_ambient_temperature, irradiance_factor, temperature_offset
             )
+
+            global_id = panel_global_ids.get(asset_tag)
+            fault_type = (
+                active_faults.get(global_id)
+                if global_id is not None
+                else None
+            )
+
+            reading = apply_fault(reading, fault_type)
+
             for target in panel_targets:
                 tasks.append((asset_tag, target, reading[target.id_short]))
 
