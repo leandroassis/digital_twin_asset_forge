@@ -17,12 +17,17 @@ class AppController {
         });
 
         // 3. Inicializar Dashboard & Alertas
+        // ALTERADO PARA O BOTÃO USAR O ELEMENTO SELECIONADO
         this.dashboard = new DashboardComponent();
-        this.alertManager = new AlertManager(this.viewer3d, (globalId) => {
-            this.tree.selectNode(globalId);
-            this.viewer3d.selectElement(globalId, false);
-            this.handleElementSelected(globalId);
-        });
+        this.alertManager = new AlertManager(
+            this.viewer3d,
+            (globalId) => {
+                this.tree.selectNode(globalId);
+                this.viewer3d.selectElement(globalId, false);
+                this.handleElementSelected(globalId);
+            },
+            () => this.selectedGlobalId
+        );
 
         this._initTopbarEvents();
         this.loadProjects();

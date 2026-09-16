@@ -10,7 +10,7 @@ Disponibiliza os endpoints da API REST utilizados pela interface Single Page App
 
 from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -50,6 +50,10 @@ async def _no_cache_for_web_assets(request, call_next):
 # Armazenamento em memória para alertas recebidos da IA / simulação
 ACTIVE_ALERTS: Dict[str, Dict[str, Any]] = {}
 
+# Armazenamento temporário das falhas aplicadas aos sensores.
+# A chave é o identificador do elemento afetado.
+ACTIVE_FAULTS: Dict[str, Dict[str, Any]] = {}
+
 class AlertModel(BaseModel):
     """Modelo Pydantic para registro e recepção de alertas de anomalias no 3D."""
 
@@ -57,6 +61,25 @@ class AlertModel(BaseModel):
     error_type: str = Field(..., description="Tipo de erro: Sujeira, Sobreaquecimento, Sobrecorrente, Noite")
     severity: str = Field("warning", description="Gravidade do alerta: info, warning, critical")
     message: str = Field(..., description="Mensagem descritiva contextual do alerta")
+
+class FaultModel(BaseModel):
+    """Representa uma falha que deve ser aplicada às medições de um ativo."""
+
+    element_id: str = Field(
+        ...,
+        min_length=1,
+        description="GlobalId do painel afetado"
+    )
+
+    fault_type: Literal[
+        "Sujeira",
+        "Sobreaquecimento",
+        "Sobrecorrente",
+        "Noite"
+    ] = Field(
+        ...,
+        description="Tipo de falha que será aplicado às medições"
+    )
 
 # Montagem de rotas estáticas para a SPA (web) e arquivos de assets (GLB)
 if WEB_DIR.exists():
@@ -148,6 +171,48 @@ def get_element_telemetry(global_id: str, count: Optional[int] = Query(None, ge=
     :return: Dicionário contendo o tipo de ativo, métricas e timestamps.
     """
     return basyx_service.get_telemetry_for_element(global_id, count=count)
+
+@app.get("/api/faults")
+def get_active_faults():
+    """Retorna todas as falhas atualmente ativas."""
+
+    return {"faults": list(ACTIVE_FAULTS.values())}
+
+
+@app.post("/api/faults")
+def activate_fault(fault: FaultModel):
+    """Ativa ou atualiza a falha associada a um elemento."""
+
+    fault_data = (
+        fault.model_dump()
+        if hasattr(fault, "model_dump")
+        else fault.dict()
+    )
+
+    ACTIVE_FAULTS[fault.element_id] = fault_data
+
+    return {
+        "status": "active",
+        "fault": fault_data
+    }
+
+
+@app.delete("/api/faults/{element_id:path}")
+def deactivate_fault(element_id: str):
+    """Remove a falha ativa de um elemento."""
+
+    if element_id in ACTIVE_FAULTS:
+        del ACTIVE_FAULTS[element_id]
+
+        return {
+            "status": "cleared",
+            "element_id": element_id
+        }
+
+    raise HTTPException(
+        status_code=404,
+        detail="Falha não encontrada."
+    )
 
 @app.get("/api/alerts")
 def get_active_alerts():

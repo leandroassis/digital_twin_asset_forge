@@ -1,9 +1,10 @@
 const ALERT_POLL_INTERVAL_MS = 5000;
 
 export class AlertManager {
-    constructor(viewer3d, onAlertClickedCallback) {
+    constructor(viewer3d, onAlertClickedCallback, getSelectedElementId) {
         this.viewer3d = viewer3d;
         this.onAlertClicked = onAlertClickedCallback;
+        this.getSelectedElementId = getSelectedElementId;
         this.alertsList = document.getElementById('active-alerts-list');
         this.alertBadge = document.getElementById('alert-count-badge');
 
@@ -100,8 +101,13 @@ export class AlertManager {
     }
 
     async triggerSimulation(errorType) {
-        // Obter um elemento aleatório para disparar a simulação
-        const elementId = "20220221KT_PANEL_001"; // ID padrão de teste
+        // ALTERADO PARA QUE O PAINEL A SER TESTADO SEJA ESCOLHIDO
+        const elementId = this.getSelectedElementId?.();
+
+        if (!elementId) {
+            window.alert("Selecione um painel antes de simular uma anomalia.");
+            return;
+        }
         
         const payload = {
             element_id: elementId,
