@@ -47,6 +47,44 @@ def test_alerts_lifecycle():
     assert del_res.status_code == 200
     assert del_res.json()["status"] == "cleared"
 
+def test_faults_lifecycle():
+    fault_payload = {
+        "element_id": "TEST_PANEL_001",
+        "fault_type": "Sobreaquecimento"
+    }
+
+    post_res = client.post("/api/faults", json=fault_payload)
+
+    assert post_res.status_code == 200
+    assert post_res.json()["status"] == "active"
+    assert post_res.json()["fault"] == fault_payload
+
+    get_res = client.get("/api/faults")
+
+    assert get_res.status_code == 200
+    faults = get_res.json()["faults"]
+
+    assert any(
+        fault["element_id"] == "TEST_PANEL_001"
+        for fault in faults
+    )
+
+    del_res = client.delete("/api/faults/TEST_PANEL_001")
+
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "cleared"
+
+def test_fault_rejects_invalid_type():
+    response = client.post(
+        "/api/faults",
+        json={
+            "element_id": "TEST_PANEL_001",
+            "fault_type": "Falha inexistente"
+        }
+    )
+
+    assert response.status_code == 422
+
 def test_telemetry_endpoint():
     res = client.get("/api/telemetry/TEST_PANEL_001")
     assert res.status_code == 200
