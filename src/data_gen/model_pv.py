@@ -12,6 +12,9 @@ from math import exp, expm1, isfinite, sqrt
 from typing import NamedTuple
 
 import numpy as np
+import random
+
+random.seed(42)  # For reproducibility in tests and examples
 
 from configs import (
     ABSOLUTE_ZERO_C,
@@ -435,9 +438,18 @@ def maximum_power_point(
             left = upper - ratio * (upper - lower)
             left_power, _ = power_at(left)
 
-    voltage_v = (lower + upper) / 2.0
+    noise_v = random.gauss(0, 0.03)
+
+    voltage_v = (lower + upper) / 2.0 + noise_v
     power_w, current_a = power_at(voltage_v)
-    return PVOperatingPoint(voltage_v, current_a, power_w, cell_temp, irradiance_value)
+
+    noise_temp = random.gauss(0, 0.02)
+
+    return PVOperatingPoint(voltage_v, 
+                            current_a, 
+                            power_w,
+                            cell_temp + noise_temp,
+                            irradiance_value)
 
 
 def pv_curve(
