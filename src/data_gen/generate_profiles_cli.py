@@ -11,8 +11,8 @@ from typing import Optional
 import typer
 
 from asset_forge import config
+from asset_forge.integration.sensor_targets import load_targets
 from configs import DATA_DIR
-from mock_data.mock_sensor import load_targets
 from perturbation import apply_anomaly, generate_profiles
 
 app = typer.Typer(add_completion=False)

@@ -33,15 +33,15 @@ def convert_ifc_to_glb(input_ifc_path: Path, output_glb_path: Path, force: bool 
         logger.error(f"Arquivo IFC de origem não encontrado: {input_ifc_path}")
         return False
 
-    if not IFCCONVERT_BIN.exists():
-        logger.error(f"Executável IfcConvert não encontrado em: {IFCCONVERT_BIN}")
-        return False
-
     output_glb_path.parent.mkdir(parents=True, exist_ok=True)
 
     if output_glb_path.exists() and not force:
         logger.info(f"Artefato GLB otimizado já existe em: {output_glb_path}. Pulando conversão.")
         return True
+
+    if not IFCCONVERT_BIN.exists():
+        logger.error(f"Executável IfcConvert não encontrado em: {IFCCONVERT_BIN}")
+        return False
 
     cmd = [
         str(IFCCONVERT_BIN),

@@ -64,7 +64,7 @@ src/visualization/
 just basyx-up
 
 # 2. Carregar pacotes AASX no BaSyx
-just basyx-upload Photovoltaic_power_plant
+just basyx-upload solar-plant
 
 # 3. Iniciar o servidor de visualização FastAPI/Uvicorn
 just viz-up

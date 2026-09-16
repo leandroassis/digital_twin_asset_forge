@@ -12,17 +12,17 @@ tanto a *configuração de conexão* de um servidor OPC UA (endpoint, modo de
 segurança) quanto um `Property` gravável por variável de sensor (ex.
 `CurrentDC`, `VoltageDC`). Não existe client/server OPC UA real neste
 pacote — o que existe é a config do DataBridge (ver DESCRIPTION.md, seção 7)
-pronta para receber de um servidor OPC UA externo, e um harness de teste
-local (`mock_data/mock_sensor.py`) que escreve/lê direto nessa mesma API
-para provar que o caminho todo está unificado. Este documento cobre como
-fazer o mesmo manualmente.
+pronta para receber de um servidor OPC UA externo, e um driver de teste
+local (`data_gen/send_to_basyx.py`, ver DESCRIPTION.md, seção 9) que
+escreve/lê direto nessa mesma API para provar que o caminho todo está
+unificado. Este documento cobre como fazer o mesmo manualmente.
 
 ## Pré-requisitos
 
 ```bash
 just basyx-up                  # sobe aas-environment (8081) + registry (8082) + UI (3000) + databridge (8085) + influxdb (8086) + history-api (8090)
 just convert-solar              # gera assets/solar-plant/output/{ifc,aas,glb}/... e infra/databridge/*.json
-just basyx-upload solar-plant   # carrega o model.aasx no BaSyx
+just basyx-upload solar-plant   # carrega todo model-NNNN.aasx gerado no BaSyx
 ```
 
 Os dados do BaSyx ficam **só em memória** (`aas-registry-log-mem`, sem
@@ -75,9 +75,13 @@ painéis reconhecidos por `is_solar_panel`):
 }
 ```
 
-Só painéis e o inversor virtual (ver abaixo) têm `opcua`/`timeseries`. Todo
-o resto (~9.499 elementos "lean", ver DESCRIPTION.md) tem só
-`technicaldata` — nenhum `nameplate` nem `opcua`.
+Só painéis e o inversor virtual (ver abaixo) têm `timeseries`; painéis,
+inversor e sensores/medidores nativos (`IfcSensor`/`IfcFlowMeter`) têm
+`opcua`. Todo o resto da planta (~9.499 elementos) tem `nameplate` +
+`technicaldata` (com geometria `Model3DIFC` anexada, ver seção 5) igual a
+qualquer outro elemento — só não tem `opcua`/`timeseries`, que ficam
+escopados a quem tem uma leitura de sensor real por trás (ver
+DESCRIPTION.md, seção 6).
 
 **O inversor** não tem `IfcElement` de origem — sua shell usa o esquema de
 id `aas/virtual/inverter` em vez de `aas/ifc/{globalId}`:
@@ -161,13 +165,12 @@ curl -s "http://localhost:8081/submodels/$SM_B64/submodel-elements/CurrentDC/\$v
 # -> "9.2"
 ```
 
-É exatamente esse par PATCH+GET que `mock_data/mock_sensor.py` roda em loop
-para cada `(painel|inversor, variável)` — ver `just mock-sensor --once` para
-rodar uma vez manualmente contra todos os alvos de uma vez, driven por
-`infra/databridge/aasserver.json` (o mesmo arquivo que o DataBridge real
-usaria). Um servidor OPC UA real faria o mesmo PATCH através do DataBridge
-(ver DESCRIPTION.md, seção 7), não direto nesta API — mas o efeito em BaSyx
-é idêntico.
+É exatamente esse par PATCH+GET que `data_gen/send_to_basyx.py` roda em loop
+para cada painel — ver `just simulate --once` para rodar uma vez manualmente
+contra todos os alvos de uma vez, driven por `infra/databridge/aasserver.json`
+(o mesmo arquivo que o DataBridge real usaria). Um servidor OPC UA real
+faria o mesmo PATCH através do DataBridge (ver DESCRIPTION.md, seção 7), não
+direto nesta API — mas o efeito em BaSyx é idêntico.
 
 Para propriedades fora do conjunto fixo de variáveis (ex. um valor novo
 dentro de `technicaldata`), `POST` cria um elemento novo:
@@ -218,18 +221,25 @@ curl -s "http://localhost:8090/series/PANEL-1529520?count=20" | python3 -m json.
 curl -s "http://localhost:8090/health"
 ```
 
-Sem `count`, a janela padrão é a última hora — se `mock_sensor.py` não
+Sem `count`, a janela padrão é a última hora — se `send_to_basyx.py` não
 estiver rodando há mais de uma hora, a resposta pode vir vazia mesmo
 havendo dados mais antigos; use `?count=N` nesse caso. Uma requisição com
 `asset_id` fora do padrão `[A-Za-z0-9_-]+` (proteção contra injeção de
 Flux) devolve HTTP 400.
 
+É exatamente esse caminho (`timeseries` submodel → `Segments.LinkedSegment`
+→ history-api) que `asset-forge model run` (`src/model/collector.py`) e o
+visualizador (`src/visualization/basyx_vis/basyx_service.py`) seguem
+programaticamente, em vez de conectar no InfluxDB direto — ver
+DESCRIPTION.md, seção 12.
+
 ## 5. Baixar a geometria 3D de um componente
 
-Só painéis e o inversor virtual carregam `Model3DIFC` (o inversor, por não
-ter geometria de origem, na verdade não tem `Model3DIFC` nenhum — só
-painéis têm). Todo o resto usa o `plant.glb` combinado (ver DESCRIPTION.md,
-seção 8) como referência 3D.
+Todo elemento IFC-backed carrega `Model3DIFC` no seu `technicaldata` (só o
+inversor virtual não, por não ter geometria de origem). O `plant.glb`
+combinado (ver DESCRIPTION.md, seção 8) continua sendo a forma prática de
+navegar a planta inteira de uma vez; `Model3DIFC` é para inspecionar/baixar
+um componente específico via API do BaSyx.
 
 ```bash
 SM_TD_B64=$(python3 -c "import base64; print(base64.urlsafe_b64encode(b'https://example.org/asset-forge/aas/ifc/2QF3\$F\$XHF1A\$PuubJ8dJ8/sm/technicaldata').decode().rstrip('='))")

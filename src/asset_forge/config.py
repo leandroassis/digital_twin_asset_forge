@@ -30,9 +30,9 @@ OPCUA_PORT = int(os.environ.get("OPCUA_PORT", "4840"))
 DATABRIDGE_DIR = Path(os.environ.get("ASSET_FORGE_DATABRIDGE_DIR", str(REPO_ROOT / "infra" / "databridge")))
 
 # Real historized sensor storage (see export/aas/submodels.py's
-# build_timeseries_submodel and mock_sensor.py) -- BaSyx itself only ever
-# holds each Property's *current* value, never a history, regardless of
-# backend. Token/org/bucket defaults match infra/docker-compose.yml's
+# build_timeseries_submodel and src/data_gen/send_to_basyx.py) -- BaSyx
+# itself only ever holds each Property's *current* value, never a history,
+# regardless of backend. Token/org/bucket defaults match infra/docker-compose.yml's
 # `influxdb` service; this is a local dev stack, not a secret worth
 # protecting.
 INFLUXDB_HOST = os.environ.get("INFLUXDB_HOST", "localhost")

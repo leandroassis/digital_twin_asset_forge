@@ -1,11 +1,12 @@
 # Como o pipeline funciona
 
 Este documento explica a lógica implementada em [src/asset_forge/](src/asset_forge/),
-[src/mock_data/](src/mock_data/) e [src/visualization/](src/visualization/): o que
-cada etapa faz, por que ela existe, e quais arquivos são responsáveis por cada
-decisão. Para instruções de uso (CLI, `just`, BaSyx local, visualizador), ver
-[README.md](README.md). Para ler/escrever dados de sensores via API do BaSyx
-ou do history-api, ver [INTEGRATION.md](INTEGRATION.md).
+[src/data_gen/](src/data_gen/), [src/model/](src/model/) e
+[src/visualization/](src/visualization/): o que cada etapa faz, por que ela
+existe, e quais arquivos são responsáveis por cada decisão. Para instruções
+de uso (CLI, `just`, BaSyx local, visualizador), ver [README.md](README.md).
+Para ler/escrever dados de sensores via API do BaSyx ou do history-api, ver
+[INTEGRATION.md](INTEGRATION.md).
 
 ## Visão geral
 
@@ -27,7 +28,7 @@ output/
 │   ├── model.graphml
 │   └── model.xml
 ├── aas/
-│   └── model.aasx          # um único pacote AAS (ver seção 6 e "Por que um único .aasx?" no README)
+│   └── model-0001.aasx, model-0002.aasx, ...  # um ou mais pacotes AAS, batched (ver seção 6 e "Por que vários .aasx?" no README)
 └── glb/
     └── plant.glb           # malha 3D da planta inteira (ver seção 8)
 ```
@@ -140,11 +141,14 @@ genérico).
 Todo o código fica em `export/aas/`. Uma Shell é criada por elemento do IFC
 (via `plant_model.by_type("IfcElement")`, 10.106 no `solar-plant` de hoje),
 mais uma shell **virtual** para o inversor (sem `IfcElement` de origem, ver
-abaixo) — 10.107 shells no total. A quantidade e o conteúdo de submodelos por
-shell dependem de uma classificação em dois níveis, ao invés de ser fixa por
-projeto:
+abaixo) — 10.107 shells no total. **Toda** shell recebe o mesmo `Nameplate` +
+`TechnicalData` completo + geometria anexada — não existe mais uma divisão
+"full/lean" por tipo de elemento (uma versão anterior deste pipeline tinha
+essa divisão; foi removida). O que continua variando por elemento é só
+`opcua`/`timeseries`, escopados a quem tem uma leitura de sensor real por
+trás:
 
-### Classificação: painel solar vs. resto
+### Classificação: painel solar vs. resto (só para `opcua`/`timeseries`)
 
 **[solar.py](src/asset_forge/export/aas/solar.py)** — `is_solar_panel(entity)` faz um
 match case-insensitive de substring (`"solar panel"`) em `Name`/`ObjectType`
@@ -161,56 +165,41 @@ INVERTER_VARIABLES = (VoltageAC/VAC, CurrentAC/IAC, PowerAC/PAC)
 ```
 
 No `solar-plant` de hoje: 607 dos 10.106 `IfcElement` são painéis
-(`is_solar_panel` == True); os outros ~9.499 (estrutura de suporte, vigas,
-etc.) recebem o tratamento "lean" abaixo. Não existe `IfcElement` para o
-inversor no IFC de origem — ele é representado por uma shell sintética (ver
-"Inversor virtual").
+(`is_solar_panel` == True). Não existe `IfcElement` para o inversor no IFC
+de origem — ele é representado por uma shell sintética (ver "Inversor
+virtual").
 
-### Tratamento "full" (painéis + inversor) vs. "lean" (resto)
+### O que cada shell recebe
 
-Essa divisão existe por um motivo concreto de limite real do BaSyx, não por
-economia arbitrária — ver "Por que um único `.aasx`?" no README para os
-números completos. Resumo do que cada tier recebe:
-
-| | **full** (painéis + inversor virtual) | **lean** (todo o resto) |
-|---|---|---|
-| Nameplate | sim | não |
-| TechnicalData | completo (todos os psets) | resumido (5 campos) |
-| `Model3DIFC` (geometria 3D anexada) | sim | não |
-| `opcua` (Properties graváveis) | sim, 4 (painel) ou 3 (inversor) variáveis | não |
-| `timeseries` | sim | não |
-
-- **`build_nameplate_submodel`**: só os campos que o elemento realmente tem
-  (`URIOfTheProduct`, `UniqueFacilityIdentifier` = GlobalId,
+- **`build_nameplate_submodel`** (toda shell): só os campos que o elemento
+  realmente tem (`URIOfTheProduct`, `UniqueFacilityIdentifier` = GlobalId,
   `ManufacturerProductDesignation` = Name) — nada de fabricante/número de
   série inventado.
-- **`build_technicaldata_submodel`** (só painéis): carrega **todos** os
+- **`build_technicaldata_submodel`** (toda shell): carrega **todos** os
   psets do elemento genericamente, um `SubmodelElementCollection` por pset,
-  um `Property` string por propriedade.
-- **`build_lean_technicaldata_submodel`** (todo o resto): **não** é
-  construído a partir do template IDTA oficial, ao contrário da versão
-  completa. Cada um dos ~20 campos folha do template oficial (mesmo vazio)
-  custa 600-800 bytes serializado por causa de `semanticId`/qualifiers —
-  medido em ~12KB/elemento mesmo já limpando os placeholders do template.
-  Multiplicado por ~9.499 elementos, isso sozinho estourava o cap real do
-  BaSyx (ver abaixo). A versão lean é um `model.Submodel` construído do zero,
-  com uma única collection `Identification` carregando 5 campos
-  (`IfcClass`, `Name`, `GlobalId`, `Tag`, `ContainingStorey`) — cai para
-  ~720 bytes/elemento.
+  um `Property` string por propriedade — não é mais uma versão exclusiva de
+  painéis; toda shell recebe a mesma decoração completa.
+- **`_attach_geometry`** (`package.py`, toda shell IFC-backed): anexa a
+  própria geometria do elemento como `Model3DIFC` no `technicaldata` (ver
+  "Empacotamento" abaixo) — também não é mais exclusivo de painéis.
 - **`build_opcua_submodel`**: a "folha de dados" IDTA de um **servidor** OPC
   UA (endpoint montado de `host`/`port`/`endpoint_path`, modo de segurança
-  "None") — igual para todo asset elegível. A novidade para painéis/inversor:
-  um parâmetro `variables` opcional adiciona um `Property` gravável por
-  variável (`id_short=variável.id_short`, `value=0.0`) diretamente no mesmo
-  submodelo — é assim que um único painel expõe 4 leituras
-  independentemente endereçáveis por um servidor OPC UA externo (real ou
-  mockado), sem precisar de 4 submodelos. Elementos que não são painel/
-  inversor mas são `IfcSensor`/`IfcFlowMeter` (`_OPCUA_ELIGIBLE_CLASSES` em
-  `package.py`) ainda recebem o submodelo `opcua` **sem** `variables` (só a
-  config de conexão, comportamento antigo, mantido para esses dois casos).
+  "None"). Só é adicionado a painéis, ao inversor virtual, e a elementos
+  `IfcSensor`/`IfcFlowMeter` (`_OPCUA_ELIGIBLE_CLASSES` em `package.py`) —
+  uma leitura OPC UA só existiria mesmo para um sensor/medidor real, então o
+  resto da planta (vigas, dutos, paredes, ...) não recebe esse submodelo.
+  Para painéis/inversor, um parâmetro `variables` opcional adiciona um
+  `Property` gravável por variável (`id_short=variável.id_short`,
+  `value=0.0`) diretamente no mesmo submodelo — é assim que um único painel
+  expõe 4 leituras independentemente endereçáveis por um servidor OPC UA
+  externo (real ou simulado, ver seção 9), sem precisar de 4 submodelos.
+  `IfcSensor`/`IfcFlowMeter` que não são painel/inversor recebem o
+  `opcua` **sem** `variables` (só a config de conexão).
 - **`build_timeseries_submodel`**: um descritor TimeSeries (IDTA 02008,
   registrado em `templates.py`) com exatamente um `Segments.LinkedSegment`
-  (não `InternalSegment`/`ExternalSegment` — removidos do template) — ver
+  (não `InternalSegment`/`ExternalSegment` — removidos do template) — só
+  painéis e o inversor virtual (não `IfcSensor`/`IfcFlowMeter` genéricos,
+  que não têm uma rodada de simulação/histórico definida para eles). Ver
   "Histórico de sensores" abaixo para por que ele aponta pro history-api e
   não direto pro InfluxDB.
 
@@ -246,17 +235,19 @@ qualquer texto livre vira um `idShort` válido pela regra AASd-002
 
 **[geometry.py](src/asset_forge/export/aas/geometry.py)** — `extract_element_ifc()`: recorta
 um `.ifc` mínimo contendo só aquele componente (+ o `IfcProject`
-compartilhado), anexado ao `technicaldata` só dos elementos "full" (ver
-"Geometria 3D no BaSyx" no README).
+compartilhado), anexado ao `technicaldata` de toda shell IFC-backed (ver
+"Geometria 3D no BaSyx" no README) — o inversor virtual é a única exceção,
+por não ter geometria de origem.
 
 **[package.py](src/asset_forge/export/aas/package.py)** — monta as Shells/submodelos e
-grava `model.aasx` em `output/aas/` (`model-0001.aasx`, `model-0002.aasx`,
-... só se `batch_size` for excedido — hoje `DEFAULT_BATCH_SIZE = 20_000`,
-acima do total de elementos de qualquer projeto em `assets/`, então sempre
-sai um único arquivo). Também é aqui que a colisão de nomes de arquivo de
-geometria (GlobalIds que diferem só em maiúscula/minúscula) é evitada, e onde
-`write_databridge_config` é chamado ao final se algum contrato OPC UA foi
-produzido (ver seção 7).
+grava um ou mais `model-NNNN.aasx` em `output/aas/`, batched por
+`batch_size` elementos (hoje `DEFAULT_BATCH_SIZE = 900`; ver "Por que vários
+`.aasx`?" no README para o porquê desse número — bem abaixo do total de
+elementos de qualquer projeto em `assets/`, então sempre saem vários
+arquivos hoje, nunca um único `model.aasx`). Também é aqui que a colisão de
+nomes de arquivo de geometria (GlobalIds que diferem só em
+maiúscula/minúscula) é evitada, e onde `write_databridge_config` é chamado
+ao final se algum contrato OPC UA foi produzido (ver seção 7).
 
 ## 7. DataBridge (config para receber dados de um servidor OPC UA externo)
 
@@ -322,23 +313,36 @@ contra o `plant.ifc` real (10.106 elementos):
 Dependência nova: `pygltflib` (Python puro, sem binário nativo — não existe
 `IfcConvert` neste ambiente).
 
-## 9. Servidor mock de sensores (teste local do pipeline BaSyx)
+## 9. Simulação de sensores (teste local do pipeline BaSyx)
 
-**[mock_data/mock_sensor.py](src/mock_data/mock_sensor.py)** — não é o serviço real de
-sensores OPC UA (esse é responsabilidade de outro projeto/equipe, ver seção
-7). É um harness de teste local, "super-dummy": escreve valores sintéticos
-diretamente nos `Property` do submodelo `opcua` de cada painel/inversor via
-`PATCH .../$value` do próprio BaSyx, lê cada um de volta via `GET
-.../$value` para confirmar que bateu, e historiza a rodada inteira no
-InfluxDB (ver seção 10) — tudo isso prova que o caminho de escrita e o de
-leitura da API do BaSyx concordam sobre o mesmo dado, e que o histórico está
-sendo persistido de forma unificada, sem precisar de nenhum servidor OPC UA
-de verdade.
+**[asset_forge/integration/sensor_targets.py](src/asset_forge/integration/sensor_targets.py)**
+parses `infra/databridge/aasserver.json`'s sink entries into typed
+`(submodel, idShort, asset_tag)` targets and exposes the `PATCH .../$value`
++ `GET .../$value` helpers every sensor driver reuses (`load_targets`,
+`write_value`, `read_value`) — not the real OPC UA sensor service itself
+(that's responsibility of another project/team, see section 7).
+
+**[data_gen/send_to_basyx.py](src/data_gen/send_to_basyx.py)** — não é o
+serviço real de sensores OPC UA. É um driver de teste local que escreve
+valores **fisicamente simulados** (via o modelo de painel fotovoltaico de
+diodo único em `model_pv.py`, não valores aleatórios) diretamente nos
+`Property` do submodelo `opcua` de cada painel, usando os alvos e helpers de
+`sensor_targets.py` acima, lê cada um de volta pra confirmar que bateu, e
+historiza a rodada inteira no InfluxDB (ver seção 10) — tudo isso prova que
+o caminho de escrita e o de leitura da API do BaSyx concordam sobre o mesmo
+dado, e que o histórico está sendo persistido de forma unificada, sem
+precisar de nenhum servidor OPC UA de verdade. Cada painel aplica seu
+próprio perfil de perturbação (`perturbation.py`/`generate_profiles_cli.py`)
+sobre a série base de irradiância/temperatura, então painéis não reportam
+todos o mesmo valor — e desvios propositais nesse perfil exercitam o modelo
+de detecção de anomalias (seção 12) de ponta a ponta.
 
 Dirigido por `infra/databridge/aasserver.json` — o mesmo arquivo que a
 seção 7 gera para o DataBridge real — então ele exercita exatamente os
 mesmos pares `(submodelo, idShortPath)` que o DataBridge real escreveria,
-sem duplicar a lista de painéis/inversor em nenhum lugar novo.
+sem duplicar a lista de painéis em nenhum lugar novo. Só painéis — o
+inversor virtual (`VoltageAC`/`CurrentAC`/`PowerAC`) fica de fora, precisaria
+de um modelo de agregação DC→AC que ainda não existe.
 
 Confirmado ao vivo contra um `aas-environment` real (2.0.0-SNAPSHOT): o
 corpo do `PATCH .../$value` precisa ser o valor **codificado como string
@@ -352,9 +356,11 @@ mesmo id usado em `Query` do submodelo `timeseries`, ex. `PANEL-1529520`) —
 não um ponto por variável, para que a `Query` única do `timeseries` retorne
 todas as variáveis daquele asset juntas.
 
-Rodar com `just mock-sensor` (ou `asset-forge mock-sensor run`); `--once`
-faz uma única rodada de escrita+leitura em vez de repetir a cada
-`--interval` segundos.
+Rodar com `just simulate` (ou `python src/data_gen/send_to_basyx.py`);
+`--once` faz uma única rodada de escrita+leitura em vez de repetir a cada
+`--interval` segundos. Ver [src/data_gen/README.md](src/data_gen/README.md)
+para o fluxo completo (incluindo `just simulate-profiles`, opcional, pra
+gerar perfis de perturbação antes de rodar).
 
 ## 10. Histórico de sensores (InfluxDB + history-api)
 
@@ -364,8 +370,8 @@ real de série temporal é uma camada separada:
 
 - **InfluxDB** (`infra/docker-compose.yml`, serviço `influxdb`, volume
   nomeado — sobrevive a `docker compose down`, ao contrário do resto da
-  stack BaSyx que é só em memória) é onde `mock_sensor.py` (ou, no futuro,
-  um serviço real de sensores) grava cada rodada.
+  stack BaSyx que é só em memória) é onde `data_gen/send_to_basyx.py` (ou,
+  no futuro, um serviço real de sensores) grava cada rodada.
 - **[history_api.py](src/asset_forge/history_api.py)** é um serviço intermediário
   (containerizado via `infra/history-api/Dockerfile`, deliberadamente sem as
   dependências pesadas do resto do pacote — só `fastapi`/`uvicorn`/
@@ -413,33 +419,68 @@ do visualizador:
   segue o submodelo `timeseries` do elemento selecionado até seu
   `LinkedSegment` (`Endpoint`/`Query`) e chama o history-api real (seção 10)
   — não gera valores aleatórios. Se o elemento não tiver submodelo
-  `timeseries` (a maioria dos elementos "lean", ver seção 6) ou o
+  `timeseries` (todo elemento fora de painéis/inversor, ver seção 6) ou o
   history-api não responder, devolve métricas vazias, não um erro.
-- **Alertas de IA** (aba "Alertas IA"): só um CRUD em memória
+- **Alertas de IA** (aba "Alertas IA"): um CRUD em memória
   (`ACTIVE_ALERTS` em `main.py`) para registrar/consultar alertas por
-  elemento — não há nenhum modelo de IA rodando por trás ainda (ver
-  seção 12).
+  elemento, populado pelo modelo de detecção de anomalias (seção 12) quando
+  ele está rodando (`just run-ai`) via `POST`/`DELETE /api/alerts`.
 
 ## 12. `src/model/`
 
-Pasta reservada, hoje vazia (só `.gitkeep`), para o futuro modelo de IA que
-consome os dados históricos do history-api/InfluxDB e gera os alertas que o
-visualizador já sabe exibir (seção 11) — ainda não implementado.
+Modelo de detecção de anomalias por Z-Score espacial sobre os dados
+históricos do history-api, gerando os alertas que o visualizador exibe
+(seção 11) — nunca conecta no InfluxDB diretamente, ao contrário de uma
+versão anterior deste módulo:
+
+- **[collector.py](src/model/collector.py)** — `fetch_latest_readings(targets, ...)`
+  busca a leitura mais recente de cada painel em
+  `{Endpoint}/series/{Query}?count=1` — o mesmo history-api que a seção 10
+  descreve — pulando o inversor virtual (detecção de anomalia é só a nível
+  de painel). `targets` vem de
+  `asset_forge.integration.timeseries.resolve_timeseries_targets`, que
+  resolve o submodelo `timeseries` de toda shell no BaSyx (`GET /shells`
+  paginado + `Segments.LinkedSegment.Endpoint`/`.Query` de cada uma) — mas
+  **só uma vez**, em `cli.py`, antes do loop de avaliação, não a cada
+  rodada: essa config é estado estático do BaSyx enquanto o `model run`
+  está de pé, então reenumerar as ~10 mil shells da planta a cada rodada
+  seria puro overhead. `Query` já é o próprio `asset_tag` (`PANEL-1529520`)
+  e o `GlobalId` IFC vem direto do `id` da shell (`.../aas/ifc/{GlobalId}`),
+  sem precisar ler `infra/databridge/aasserver.json` nem assumir host/porta
+  do InfluxDB.
+- **[detector.py](src/model/detector.py)** — `AnomalyDetector.evaluate_batch`
+  calcula o Z-Score espacial (`(x - média) / desvio`) de temperatura e
+  corrente DC de cada painel contra seus pares no campo naquela rodada, e
+  delega a classificação a `rules.py::evaluate_panel`.
+- **[rules.py](src/model/rules.py)** — `AnomalyThresholds` (limiares
+  configuráveis via `config/rules.json`, com hot-reload automático se o
+  arquivo mudar em disco enquanto `model run` está de pé) e
+  `evaluate_panel`, que classifica cada painel em `Noite` (baixa
+  luminosidade), `Sobrecorrente`/`Sobreaquecimento` (Z-Score ou limite
+  absoluto excedido) ou `Sujeira` (corrente anormalmente abaixo da média do
+  campo com luz normal), nessa ordem de prioridade.
+- **[notifier.py](src/model/notifier.py)** — `AlertNotifier.sync_alerts`
+  reconcilia o estado com o visualizador: `POST /api/alerts` para cada
+  alerta ativo, `DELETE /api/alerts/{id}` para painéis que voltaram ao
+  normal desde a rodada anterior.
+- **[cli.py](src/model/cli.py)** — loop de avaliação (`asset-forge model
+  run` / `just run-ai`); `--once` faz uma única rodada.
 
 ## O que fica fora do escopo atual
 
 - **Servidor/cliente OPC UA real**: nenhum código de servidor ou cliente OPC
-  UA existe neste repositório. `mock_data/mock_sensor.py` (seção 9) é um
-  atalho de teste que escreve direto na API do BaSyx para validar o
+  UA existe neste repositório. `data_gen/send_to_basyx.py` (seção 9) é um
+  driver de teste que escreve direto na API do BaSyx para validar o
   pipeline; um servidor OPC UA real (mockado por outra equipe, ou um sensor
   de verdade) é o que a config do DataBridge (seção 7) está pronta para
   receber, mas não é implementado aqui.
-- **Modelo de IA / detecção de anomalias**: `src/model/` existe como pasta
-  reservada (seção 12), sem implementação. O CRUD de alertas do
-  visualizador (seção 11) é só o endpoint que um modelo futuro
-  popularia.
 - **Reclassificação semântica**: elementos genéricos permanecem genéricos;
   nenhuma tabela de regras infere um tipo IFC mais específico a partir de
   psets/nome.
 - **Reconstrução de conexões por geometria**: DEXPI só existe quando o IFC de
   origem já carrega relações de conectividade nativas.
+- **Configuração do `data_gen` pela visualização**: `src/visualization/` e
+  `src/data_gen/` são processos independentes, sem nenhum endpoint que ligue
+  um ao outro — parâmetros de simulação (`--mode`, `--seed`,
+  `--irradiance-noise-std`, etc., seção 9) só são configuráveis via CLI
+  (`just simulate-profiles`/`just simulate`), não pela SPA.

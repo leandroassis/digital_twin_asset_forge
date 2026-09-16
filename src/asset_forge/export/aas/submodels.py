@@ -133,10 +133,10 @@ def build_timeseries_submodel(
     is just the plain `asset_tag` (e.g. "PANEL-1529520"), and `Endpoint` is
     history_api.py's own base URL -- a consumer calls
     `{Endpoint}/series/{Query}` and gets JSON back, never touching Flux or
-    knowing InfluxDB is the backend at all. `asset_tag` must match what
-    mock_sensor.py tags its InfluxDB points with for the same asset (one
-    query/tag returns every one of that asset's variables together, not
-    just one -- see mock_sensor.py's module docstring)."""
+    knowing InfluxDB is the backend at all. `asset_tag` must match what a
+    sensor driver (e.g. src/data_gen/send_to_basyx.py) tags its InfluxDB
+    points with for the same asset (one query/tag returns every one of
+    that asset's variables together, not just one)."""
     submodel = load_template("timeseries")
     submodel.id_short = "timeseries"
 

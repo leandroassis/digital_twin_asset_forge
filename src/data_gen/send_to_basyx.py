@@ -1,15 +1,16 @@
 """Send physically-simulated panel readings to BaSyx.
 
-Same write/read-back/historize pattern as mock_data/mock_sensor.py (PATCH
-each opcua Property's `$value`, GET it back to confirm, historize the round
-into InfluxDB) -- reused directly from there rather than duplicated. The
-difference: instead of one independent random value per Property,
-LightIntensity/Temperature/CurrentDC/VoltageDC for a given panel are derived
-together from model_pv.maximum_power_point(), so they stay physically
-consistent with each other. Each panel additionally applies its own
-perturbation profile (see perturbation.py / generate_profiles_cli.py) on top
-of the shared base irradiance/temperature series, so panels don't all report
-identical readings.
+Same write/read-back/historize pattern as
+asset_forge.integration.sensor_targets (PATCH each opcua Property's
+`$value`, GET it back to confirm, historize the round into InfluxDB) --
+reused directly from there rather than duplicated. The difference: instead
+of one independent random value per Property, LightIntensity/Temperature/
+CurrentDC/VoltageDC for a given panel are derived together from
+model_pv.maximum_power_point(), so they stay physically consistent with each
+other. Each panel additionally applies its own perturbation profile (see
+perturbation.py / generate_profiles_cli.py) on top of the shared base
+irradiance/temperature series, so panels don't all report identical
+readings.
 
 Only panels are driven here -- the virtual inverter would need a DC->AC
 aggregation model that doesn't exist yet (see the project plan).
@@ -30,8 +31,8 @@ from loguru import logger
 
 from asset_forge import config
 from asset_forge.export.aas.solar import PANEL_VARIABLES
+from asset_forge.integration.sensor_targets import SensorTarget, _value_url, load_targets
 from configs import DATA_DIR, SIMULATION_START_DATETIME, SIMULATION_STEP
-from mock_data.mock_sensor import SensorTarget, _value_url, load_targets
 from model_pv import PVParameters, maximum_power_point
 from perturbation import generate_profiles
 from send_data_to_OPCUA import interpolate_dataset
@@ -42,16 +43,16 @@ PANEL_ID_SHORTS = {variable.id_short for variable in PANEL_VARIABLES}
 
 
 def _write_value(session: requests.Session, host: str, port: int, target: SensorTarget, value: float) -> None:
-    """Same PATCH as mock_sensor.write_value, but over a reused `Session`
-    instead of opening a fresh connection per call (see the project plan --
-    this module drives far more Properties per round than mock_sensor.py
-    does, so connection reuse matters here)."""
+    """Same PATCH as sensor_targets.write_value, but over a reused `Session`
+    instead of opening a fresh connection per call (this module drives far
+    more Properties per round than a single-target write would, so
+    connection reuse matters here)."""
     resp = session.patch(_value_url(host, port, target), json=str(value), timeout=10)
     resp.raise_for_status()
 
 
 def _read_value(session: requests.Session, host: str, port: int, target: SensorTarget) -> float:
-    """Same GET as mock_sensor.read_value, but over a reused `Session`."""
+    """Same GET as sensor_targets.read_value, but over a reused `Session`."""
     resp = session.get(_value_url(host, port, target), timeout=10)
     resp.raise_for_status()
     return float(resp.json())
@@ -106,8 +107,8 @@ def _group_by_panel(targets: List[SensorTarget]) -> Dict[str, List[SensorTarget]
 
     Args:
         targets: Flat target list as returned by
-            :func:`mock_data.mock_sensor.load_targets` -- panels, the
-            inverter, and any other asset type mixed together.
+            :func:`asset_forge.integration.sensor_targets.load_targets` --
+            panels, the inverter, and any other asset type mixed together.
 
     Returns:
         A dict mapping each panel's ``asset_tag`` (e.g. ``"PANEL-1529520"``)
@@ -135,16 +136,15 @@ class _WriteResult(NamedTuple):
 def _write_and_verify(
     session: requests.Session, host: str, port: int, asset_tag: str, target: SensorTarget, value: float
 ) -> _WriteResult:
-    """Run the same write-then-read-back pair as mock_sensor.py's `run()`
-    loop, but as a single call so it can be submitted to a thread pool.
+    """Run one write-then-read-back pair against BaSyx, as a single call so
+    it can be submitted to a thread pool.
 
     Args:
         session: Shared ``requests.Session`` -- reused across every call in
             a round so concurrent write+read pairs don't each open a fresh
-            TCP connection (this module drives far more Properties per
-            round than mock_sensor.py does; without reuse, high
-            ``--max-workers`` values can exhaust local ephemeral ports on
-            Windows).
+            TCP connection (each round drives ``len(panels) * 4`` independent
+            pairs; without reuse, high ``--max-workers`` values can exhaust
+            local ephemeral ports on Windows).
         host: BaSyx ``aas-environment`` hostname.
         port: BaSyx ``aas-environment`` port.
         asset_tag: The panel this target belongs to (carried through so the
@@ -221,8 +221,8 @@ def run(
         max_workers: How many write_value/read_value pairs to run
             concurrently (thread pool). Each round is ``len(panels) * 4``
             independent pairs, so running them one at a time (the default,
-            matching mock_sensor.py's sequential behavior) is dominated by
-            per-request network latency, not local computation -- raising
+            fully sequential) is dominated by per-request network latency,
+            not local computation -- raising
             this trades that safety margin for speed, and the right value
             depends on this machine, the network, and how much concurrent
             load the target BaSyx instance can actually take, so there's no

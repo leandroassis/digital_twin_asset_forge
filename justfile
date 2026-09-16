@@ -75,6 +75,19 @@ basyx-up:
 basyx-down:
     docker compose -f infra/docker-compose.yml down
 
+# infra/docker-compose.apps.yml adds model/data-gen/visualization on top of basyx-up, each its own
+# container (host networking -- see that file for why); upload a plant first (basyx-upload) for them to have real data
+up: basyx-up
+    docker compose -f infra/docker-compose.yml -f infra/docker-compose.apps.yml up -d --build
+    @echo "waiting for the visualizer to come up..."
+    @until curl -sf http://localhost:8000/api/models >/dev/null 2>&1; do sleep 1; done
+    @echo "Full stack is up: visualizer http://localhost:8000, model + data-gen running as containers"
+    @echo "(logs: docker compose -f infra/docker-compose.yml -f infra/docker-compose.apps.yml logs -f model data-gen visualization)"
+
+# Stop and remove every container from the full stack (BaSyx + model/data-gen/visualization)
+down:
+    docker compose -f infra/docker-compose.yml -f infra/docker-compose.apps.yml down
+
 # Upload every .aasx a project produced to BaSyx and register each with the registry (large projects batch into model-NNNN.aasx)
 basyx-upload project host="localhost" port="8081" registry_host="localhost" registry_port="8082": basyx-clear
     #!/usr/bin/env bash
@@ -98,9 +111,13 @@ basyx-clear host="localhost" port="8081" registry_host="localhost" registry_port
         --host-aas-env {{host}} --port-aas-env {{port}} \
         --host-registry {{registry_host}} --port-registry {{registry_port}}
 
-# Dummy sensor mock: writes+reads-back synthetic values into every opcua submodel Property (see mock_sensor.py). Add --once for a single round instead of looping.
-mock-sensor *args:
-    {{forge}} mock-sensor run {{args}}
+# Generate physically-simulated per-panel profiles (data_gen) -- inspect the CSV before sending it, see src/data_gen/README.md
+simulate-profiles *args:
+    {{python}} src/data_gen/generate_profiles_cli.py {{args}}
+
+# Drive BaSyx with physically-simulated sensor readings (data_gen): writes+reads-back panel values derived from model_pv.py and historizes them into InfluxDB. Add --once for a single round instead of looping.
+simulate *args:
+    {{python}} src/data_gen/send_to_basyx.py {{args}}
 
 # Run the Z-Score AI Anomaly Detection model against InfluxDB and sync alerts with the 3D visualizer
 # (`just run-ai --once`; another rules file via RULES_CONFIG=... or `--config PATH`)

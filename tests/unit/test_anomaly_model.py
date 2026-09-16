@@ -2,12 +2,11 @@
 
 import json
 from typing import Dict, List, Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
-import pytest
 
-from model.collector import build_panel_readings, load_tag_to_global_id_map
+from model.collector import build_panel_readings
 from model.detector import AnomalyDetector, PanelReading, compute_z_scores
 from model.notifier import AlertNotifier
 from model.rules import AlertPayload, AnomalyThresholds, FaultType, evaluate_panel
@@ -16,7 +15,7 @@ from model.rules import AlertPayload, AnomalyThresholds, FaultType, evaluate_pan
 class MockSolarSensorSimulator:
     """Dedicated in-test solar plant sensor simulator with controlled fault injection.
 
-    Allows testing the anomaly detection model without relying on external services or modifying mock_sensor.py.
+    Allows testing the anomaly detection model without relying on external services.
     """
 
     def __init__(self, num_panels: int = 50, seed: int = 42):
@@ -235,41 +234,6 @@ def test_mock_sensor_simulation_night_condition():
 
     assert len(alerts) == 30
     assert all(a.error_type == FaultType.NIGHT.value for a in alerts)
-
-
-@pytest.mark.parametrize("unique_id", ["aas-PANEL-1529520-LUX", "opcua-PANEL-1529520-LUX"])
-def test_load_tag_to_global_id_map(tmp_path, unique_id):
-    aasserver_file = tmp_path / "aasserver.json"
-    import base64
-
-    fake_uri = "https://example.org/asset-forge/aas/ifc/2QF3$F$XHF1A$PuubJ8dJ8/sm/opcua"
-    b64_uri = base64.urlsafe_b64encode(fake_uri.encode()).decode().rstrip("=")
-
-    # Same shape databridge.py writes: "aas-" prefix, no trailing path after the id
-    content = [
-        {
-            "uniqueId": unique_id,
-            "submodelEndpoint": f"http://localhost:8081/submodels/{b64_uri}",
-            "idShortPath": "LightIntensity",
-            "api": "DOT_AAS_V3",
-        }
-    ]
-    aasserver_file.write_text(json.dumps(content))
-
-    tag_map = load_tag_to_global_id_map(aasserver_file)
-    assert tag_map == {"PANEL-1529520": "2QF3$F$XHF1A$PuubJ8dJ8"}
-
-
-def test_load_tag_to_global_id_map_against_generated_databridge_config():
-    from asset_forge import config
-
-    aasserver_path = config.DATABRIDGE_DIR / "aasserver.json"
-    if not aasserver_path.is_file():
-        pytest.skip("infra/databridge/aasserver.json not generated")
-
-    tag_map = load_tag_to_global_id_map(aasserver_path)
-    assert tag_map, "no panel mappings resolved from the generated databridge config"
-    assert all(tag.startswith("PANEL-") for tag in tag_map)
 
 
 def test_build_panel_readings_resolves_global_id_and_skips_incomplete():

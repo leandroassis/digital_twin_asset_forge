@@ -1,11 +1,15 @@
 # data_gen
 
 Simula sensores de uma planta solar (607 painéis) com valores fisicamente
-consistentes — não aleatórios — e envia esses valores pro BaSyx, seguindo o
-mesmo padrão de escrita que `src/mock_data/mock_sensor.py` já usa. Módulo
-isolado: não é instalado junto com o pacote `asset-forge` (não está em
-`pyproject.toml`) nem é chamado pelo `justfile`/CLI — roda direto como
-script, com `src/data_gen` adicionado a `sys.path`.
+consistentes — não aleatórios — e envia esses valores pro BaSyx, reusando os
+alvos e helpers de escrita/leitura de
+`asset_forge.integration.sensor_targets` (parsing de `aasserver.json`,
+PATCH/GET do `$value`). Módulo isolado: não é instalado junto com o pacote
+`asset-forge` (não está em `pyproject.toml`), mas os dois scripts principais
+(`generate_profiles_cli.py`, `send_to_basyx.py`) são expostos via
+`just simulate-profiles`/`just simulate` (ver README.md da raiz) — roda
+direto como script, com `src/data_gen` adicionado a `sys.path` (feito
+automaticamente pelo Python ao invocar um script diretamente).
 
 ## Pré-requisitos
 
@@ -17,8 +21,8 @@ script, com `src/data_gen` adicionado a `sys.path`.
    ```
    Sem isso, os painéis não existem no BaSyx e não há `opcua` Property
    nenhum pra escrever.
-2. Pacote instalado no venv (`asset_forge`, `mock_data` — usados por este
-   módulo):
+2. Pacote `asset_forge` instalado no venv (usado por este módulo via
+   `asset_forge.integration.sensor_targets`/`asset_forge.export.aas.solar`):
    ```powershell
    uv pip install -e ".[dev]" --python .venv\Scripts\python.exe
    ```
@@ -70,9 +74,9 @@ Opções úteis:
 - `--profiles-path`: usar um CSV de perfis diferente do default
   (`dataset/panel_profiles.csv`).
 - `--max-workers N`: paraleliza as requisições HTTP pro BaSyx (default `1`,
-  sequencial — o mesmo que `mock_sensor.py` sempre fez). Cada rodada é
-  607×4=2428 pares independentes de `PATCH`+`GET`; rodar um de cada vez é
-  seguro mas lento (~65s/rodada medido localmente). Suba esse número de
+  sequencial). Cada rodada é 607×4=2428 pares independentes de
+  `PATCH`+`GET`; rodar um de cada vez é seguro mas lento (~65s/rodada medido
+  localmente). Suba esse número de
   acordo com o que sua máquina/rede/BaSyx aguentam — não existe um valor
   certo universal. 32 levou a mesma rodada a ~9s numa stack Docker local.
 - `--interval`: segundos reais de espera **depois** de cada rodada completar
@@ -132,7 +136,7 @@ não é bug, é o tempo real de 2428 requisições sequenciais.
   aplica o perfil de um painel sobre a série base e roda `model_pv`,
   retornando os 4 valores das Properties `opcua`; `run()` é o loop que avança
   o relógio simulado, escreve cada painel no BaSyx (reaproveitando
-  `write_value`/`read_value` de `mock_data/mock_sensor.py`, em paralelo via
+  `write_value`/`read_value` de `asset_forge.integration.sensor_targets`, em paralelo via
   `ThreadPoolExecutor` se `--max-workers` > 1) e historiza no InfluxDB. Só
   painéis — o inversor virtual (`VoltageAC`/`CurrentAC`/`PowerAC`) fica de
   fora, precisaria de um modelo de agregação DC→AC que ainda não existe.
@@ -172,7 +176,9 @@ cobrem só as partes puras (`panel_reading`, `_group_by_panel`) — nada de rede
 ## Limitações conhecidas
 
 - Não é um pacote Python (sem `__init__.py`), não está em
-  `pyproject.toml`/`setuptools.packages.find`.
+  `pyproject.toml`/`setuptools.packages.find` -- exposto via `just
+  simulate`/`just simulate-profiles` (que invocam os scripts diretamente),
+  não via `asset-forge`.
 - O inversor virtual não recebe dados — só os 607 painéis.
 - Sem tratamento de `NaN` no dataset base (propaga silenciosamente se um
   instante simulado cair perto de uma amostra faltante).

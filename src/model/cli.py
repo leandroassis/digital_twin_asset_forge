@@ -4,11 +4,13 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import requests
 import typer
 from loguru import logger
 
 from asset_forge import config
-from model.collector import fetch_latest_readings_from_influx, load_tag_to_global_id_map
+from asset_forge.integration.timeseries import resolve_timeseries_targets
+from model.collector import fetch_latest_readings
 from model.detector import AnomalyDetector
 from model.notifier import AlertNotifier
 from model.rules import AnomalyThresholds
@@ -27,15 +29,8 @@ def run(
         "-c",
         help="Caminho para o arquivo JSON com regras e limiares de anomalia",
     ),
-    aasserver_path: Optional[Path] = typer.Option(
-        None, "--aasserver-path", help="Optional path to aasserver.json for tag mapping"
-    ),
-    # InfluxDB Connection Options
-    influx_host: str = typer.Option(config.INFLUXDB_HOST, "--influx-host"),
-    influx_port: int = typer.Option(config.INFLUXDB_PORT, "--influx-port"),
-    influx_token: str = typer.Option(config.INFLUXDB_TOKEN, "--influx-token"),
-    influx_org: str = typer.Option(config.INFLUXDB_ORG, "--influx-org"),
-    influx_bucket: str = typer.Option(config.INFLUXDB_BUCKET, "--influx-bucket"),
+    host_aas_env: str = typer.Option(config.AAS_ENV_HOST, "--host-aas-env"),
+    port_aas_env: int = typer.Option(config.AAS_ENV_PORT, "--port-aas-env"),
     # Configurable Anomaly Thresholds (opcionais; sobrescrevem o arquivo de configuração se fornecidos)
     z_dirt: Optional[float] = typer.Option(None, "--z-dirt", help="Override: Current Z-Score threshold for Dirt (negative)"),
     z_overheat: Optional[float] = typer.Option(None, "--z-overheat", help="Override: Temperature Z-Score threshold for Overheating"),
@@ -83,15 +78,13 @@ def run(
 
     detector = AnomalyDetector(thresholds=thresholds)
     notifier = AlertNotifier(viz_base_url=viz_url)
+    session = requests.Session()
 
-    logger.info("Carregando mapeamento de tags para GlobalIds do IFC...")
-    tag_map = load_tag_to_global_id_map(aasserver_path)
-    logger.info(f"Mapeamento carregado com {len(tag_map)} associações.")
+    logger.info(f"Resolvendo alvos de timeseries via BaSyx ({host_aas_env}:{port_aas_env})...")
+    targets = resolve_timeseries_targets(host_aas_env, port_aas_env, session=session)
+    logger.info(f"{len(targets)} alvo(s) de timeseries resolvido(s) (painéis + inversor).")
 
-    logger.info(
-        f"Iniciando detector de anomalias contra InfluxDB ({influx_host}:{influx_port}/{influx_bucket}) "
-        f"com intervalo de {interval}s..."
-    )
+    logger.info(f"Iniciando detector de anomalias com intervalo de {interval}s...")
 
     while True:
         # Hot-reload automático: se o arquivo de regras for alterado em disco, recarrega
@@ -104,17 +97,10 @@ def run(
                     logger.info(f"Arquivo {config_file} alterado! Novas regras carregadas e reaplicadas com sucesso.")
             except OSError:
                 pass
-        readings = fetch_latest_readings_from_influx(
-            influx_host=influx_host,
-            influx_port=influx_port,
-            influx_token=influx_token,
-            influx_org=influx_org,
-            influx_bucket=influx_bucket,
-            tag_to_global_id=tag_map,
-        )
+        readings = fetch_latest_readings(targets, session=session)
 
         if not readings:
-            logger.warning("Nenhuma leitura encontrada no InfluxDB. Aguardando dados de telemetria...")
+            logger.warning("Nenhuma leitura encontrada via BaSyx/history-api. Aguardando dados de telemetria...")
         else:
             alerts = detector.evaluate_batch(readings)
             sync_res = notifier.sync_alerts(alerts)

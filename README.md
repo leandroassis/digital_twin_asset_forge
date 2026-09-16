@@ -7,9 +7,11 @@ pacote para um deployment Eclipse BaSyx (`infra/docker-compose.yml`, subido
 localmente via `just basyx-up`), infraestrutura pronta para receber leituras
 de sensores de um servidor OPC UA externo (config-only, ver
 [DESCRIPTION.md](DESCRIPTION.md)), armazenamento histórico real dessas
-leituras (InfluxDB + um serviço intermediário, history-api), e uma UI web
-(Three.js) para navegar a planta em 3D, inspecionar os submodelos AAS de
-cada componente e ver suas séries temporais.
+leituras (InfluxDB + um serviço intermediário, history-api), um modelo de
+detecção de anomalias por Z-Score espacial (`src/model/`) que sincroniza
+alertas com o visualizador, e uma UI web (Three.js) para navegar a planta em
+3D, inspecionar os submodelos AAS de cada componente e ver suas séries
+temporais.
 
 `assets/solar-plant/` é hoje o único projeto suportado — a etapa de
 exportação AAS foi otimizada especificamente para essa planta (classificação
@@ -29,14 +31,19 @@ Ou, com [`just`](https://github.com/casey/just): `just setup`.
 ## Uso
 
 ```bash
-# Converte o projeto: gera plant.ifc, um pacote AAS único, um plant.glb e a
-# config do DataBridge (infra/databridge/*.json)
+# Converte o projeto: gera plant.ifc, um ou mais pacotes AAS (model-0001.aasx,
+# model-0002.aasx, ... -- ver "Por que vários .aasx?" abaixo), um plant.glb e
+# a config do DataBridge (infra/databridge/*.json)
 asset-forge convert assets/solar-plant --namespace example.org/asset-forge
 
-# Sobe o .aasx gerado para um BaSyx local e registra as shells no registry
-asset-forge basyx upload --aasx-path assets/solar-plant/output/aas/model.aasx
+# Sobe cada .aasx gerado para um BaSyx local e registra as shells no registry
+for f in assets/solar-plant/output/aas/*.aasx; do
+  asset-forge basyx upload --aasx-path "$f"
+done
 asset-forge basyx clear
 ```
+
+(`just basyx-upload solar-plant` já faz esse loop automaticamente — ver abaixo.)
 
 Ver `asset-forge convert --help` para as opções de namespace, hosts/portas
 do ambiente AAS, do datasheet OPC UA e do history-api (`src/asset_forge/config.py`
@@ -55,7 +62,9 @@ just basyx-upload solar-plant  # limpa e envia o .aasx do projeto para o BaSyx
 just basyx-clear            # limpa shells/submodelos e seus descriptors no registry
 just basyx-down             # para e remove todos os containers Docker
 
-just mock-sensor            # loop de escrita+leitura+historização em cada Property opcua (--once p/ uma rodada só)
+just simulate-profiles      # gera o perfil de perturbação de cada painel (data_gen, opcional)
+just simulate               # loop de escrita+leitura+historização em cada Property opcua com dados fisicamente simulados (--once p/ uma rodada só)
+just run-ai                 # roda o modelo de detecção de anomalias (Z-Score) via BaSyx/history-api
 just viz-up                 # inicia o servidor FastAPI/Uvicorn do visualizador 3D (http://localhost:8000)
 
 just test                   # suíte completa
@@ -86,49 +95,56 @@ endereço.
 
 Depois de `just basyx-upload solar-plant`, abra http://localhost:3000 (UI
 oficial do BaSyx) ou http://localhost:8000 (visualizador deste projeto, ver
-abaixo) para navegar pelas shells enviadas. Cada componente carrega, no
-mínimo, `technicaldata`; painéis solares e o inversor também carregam
-`nameplate`, `opcua` (com `Property` graváveis por variável de sensor) e
-`timeseries` — ver [DESCRIPTION.md](DESCRIPTION.md) para a divisão exata.
+abaixo) para navegar pelas shells enviadas. Todo componente carrega
+`nameplate` + `technicaldata` (todos os psets do elemento, genericamente) +
+sua própria geometria 3D (ver abaixo); só painéis solares, o inversor
+virtual e sensores/medidores nativos (`IfcSensor`/`IfcFlowMeter`) também
+carregam `opcua` (com `Property` graváveis por variável de sensor, quando
+aplicável) e — só painéis/inversor — `timeseries` — ver
+[DESCRIPTION.md](DESCRIPTION.md), seção 6, para a divisão exata.
 
-**Geometria 3D no BaSyx:** todo painel solar (e só painéis — ver
-DESCRIPTION.md) carrega, no seu submodelo `technicaldata`, um `File`
-`Model3DIFC` com um `.ifc` mínimo daquele componente, extraído do
-`plant.ifc` e empacotado como arquivo suplementar dentro do `.aasx`.
-Confirmado ao vivo: `GET /submodels/{id}/submodel-elements/Model3DIFC/attachment`
-retorna o STEP de volta. O resto da planta (~9.499 elementos) não carrega
-geometria individual no AAS — a referência 3D deles é o `plant.glb`
-combinado (ver "Visualizador web" abaixo).
+**Geometria 3D no BaSyx:** todo elemento da planta (não só painéis) carrega,
+no seu submodelo `technicaldata`, um `File` `Model3DIFC` com um `.ifc`
+mínimo daquele componente, extraído do `plant.ifc` e empacotado como
+arquivo suplementar dentro do `.aasx`. Confirmado ao vivo:
+`GET /submodels/{id}/submodel-elements/Model3DIFC/attachment` retorna o
+STEP de volta. O `plant.glb` combinado (ver "Visualizador web" abaixo)
+continua sendo a forma prática de navegar a planta inteira de uma vez; o
+`Model3DIFC` por elemento é para inspecionar/baixar um componente
+específico via API do BaSyx.
 
-### Por que um único `.aasx`?
+### Por que vários `.aasx`?
 
 `asset-forge convert` grava um `.aasx` por lote de até `DEFAULT_BATCH_SIZE`
-elementos (hoje 20.000 — acima do total de qualquer projeto em `assets/`,
-então sempre sai um único `model.aasx`; só se esse limite fosse excedido
-sairia `model-0001.aasx`, `model-0002.aasx`, ...). Isso não era sempre
-verdade: o **conteúdo** de cada shell é que precisou mudar para caber num
-único pacote, por dois limites reais e independentes do Apache POI (usado
-pelo BaSyx do lado do servidor para ler o pacote), cada um confirmado ao
-vivo contra um BaSyx de verdade e nenhum configurável do nosso lado:
+elementos (hoje **900** — bem abaixo do total de qualquer projeto em
+`assets/`, então sempre saem vários arquivos: `model-0001.aasx`,
+`model-0002.aasx`, ...; só um projeto com ≤900 elementos sairia num único
+`model.aasx`). O motivo: **todo** elemento agora carrega `TechnicalData`
+completo (todos os psets) + sua própria geometria `Model3DIFC` anexada —
+não só painéis solares (ver seção anterior) — e isso não cabe num único
+pacote, por dois limites reais e independentes do Apache POI (usado pelo
+BaSyx do lado do servidor para ler o pacote), cada um confirmado ao vivo
+contra um BaSyx de verdade e nenhum configurável do nosso lado:
 
 1. **Limite de bytes por parte interna do pacote.** `org.apache.poi.util.IOUtils`
    recusa alocar mais de 100.000.000 bytes para um único registro/parte ao
-   ler o pacote de volta. Um `TechnicalData` completo (todos os psets, sem
-   split) para os ~10.106 elementos da planta solar mediria dezenas de MB
-   de sobra desse cap.
+   ler o pacote de volta. Um `TechnicalData` completo (todos os psets) para
+   os ~10.106 elementos da planta solar, tudo num único `data.json`,
+   passaria bem desse cap.
 2. **Limite de número de entradas no zip/pacote OPC.** A proteção contra zip
    bomb do Apache POI (`ZipSecureFile`) rejeita qualquer pacote com mais de
-   1000 entradas no total. Como cada elemento com geometria anexada carrega
-   seu próprio arquivo de anexo, anexar geometria a todos os ~10.106
-   elementos sozinho já estouraria esse limite.
+   1000 entradas no total. Como **todo** elemento com geometria anexada
+   carrega seu próprio arquivo de anexo, um único lote de 900 elementos já
+   soma ~906 entradas (900 arquivos `.ifc` + ~6 partes fixas de
+   manifesto/rels) — folga confortável sob 1000; um lote maior passaria
+   direto por esse teto.
 
-A solução: uma divisão **full/lean** por elemento (ver DESCRIPTION.md, seção
-6) — só painéis solares (607) e o inversor virtual recebem `TechnicalData`
-completo + geometria anexada + `opcua`/`timeseries`; os ~9.499 elementos
-restantes recebem um `TechnicalData` resumido de 5 campos, sem geometria.
-Resultado medido, ao vivo, para o `solar-plant` de hoje: **um único**
-`model.aasx` de 4,5MB no disco, `data.json` interno de 48.245.990 bytes
-(bem abaixo do cap de 100MB) e 613 entradas no zip (bem abaixo de 1000).
+Resultado medido, ao vivo, para o `solar-plant` de hoje: **12** arquivos
+`model-0001.aasx`...`model-0012.aasx` (11 lotes de 900 elementos + 1 de
+206), ~53MB no total, cada um com 906 entradas no zip (ou menos, no último
+lote) — bem abaixo do teto de 1000 em todos. `asset-forge basyx
+upload`/`just basyx-upload` já iteram sobre todo arquivo produzido, então
+isso é transparente para quem só quer subir a planta pro BaSyx.
 
 Outros dois bugs reais encontrados no mesmo processo, ambos já contornados:
 - `spring.servlet.multipart.max-*-size` precisou ser aumentado no
@@ -156,8 +172,9 @@ lê tudo ao vivo — nada mockado do lado do visualizador:
 - Busca a série histórica real do componente (painéis/inversor) seguindo o
   submodelo `timeseries` até o history-api (ver seção "InfluxDB" abaixo) —
   não gera dados sintéticos.
-- Tem uma aba de alertas (CRUD em memória, sem modelo de IA por trás ainda —
-  ver `src/model/` abaixo).
+- Tem uma aba de alertas (CRUD em memória), populada pelo modelo de
+  detecção de anomalias (`just run-ai`, ver `src/model/` abaixo) quando ele
+  está rodando.
 
 Requer `just basyx-up` + `just basyx-upload solar-plant` rodando para ter
 dado real pra mostrar; sem isso, a árvore aparece vazia e o status "BaSyx
@@ -183,7 +200,7 @@ histórico. Para isso existe:
 Ver [INTEGRATION.md](INTEGRATION.md) para exemplos completos de leitura
 (`$value`, histórico via history-api) e escrita manual de sensores.
 
-### Servidor mock de sensores
+### Simulação de sensores (`src/data_gen/`)
 
 Nenhum servidor/cliente OPC UA real existe neste repositório — receber
 dados de um servidor OPC UA real é o que a config do DataBridge
@@ -192,19 +209,32 @@ pronta para fazer, mas o servidor em si é responsabilidade de outro
 projeto/equipe.
 
 Para testar que o caminho BaSyx-todo está unificado sem esperar por esse
-serviço externo, `just mock-sensor` (`src/mock_data/mock_sensor.py`) escreve
-valores sintéticos direto nos `Property` do submodelo `opcua` de cada
-painel/inversor via a própria API do BaSyx, lê cada um de volta pra
+serviço externo, `just simulate` (`src/data_gen/send_to_basyx.py`) escreve
+valores fisicamente simulados (via o modelo de painel fotovoltaico em
+`model_pv.py`, não valores aleatórios) direto nos `Property` do submodelo
+`opcua` de cada painel via a própria API do BaSyx, lê cada um de volta pra
 confirmar, e historiza a rodada no InfluxDB — dirigido pelo mesmo
 `infra/databridge/aasserver.json` que o DataBridge real usaria, então
 exercita exatamente os mesmos alvos. `--once` faz uma rodada só;
-`--interval` controla o intervalo entre rodadas em loop.
+`--interval` controla o intervalo entre rodadas em loop. `just
+simulate-profiles` (opcional, ver [src/data_gen/README.md](src/data_gen/README.md))
+gera antes um perfil de perturbação por painel, pra painéis não reportarem
+todos o mesmo valor e pra exercitar o modelo de anomalias com desvios
+propositais.
 
 ### `src/model/`
 
-Pasta reservada para o futuro modelo de IA (detecção de anomalias sobre o
-histórico do history-api/InfluxDB, alimentando a aba de alertas do
-visualizador). Hoje vazia, só `.gitkeep` — sem implementação ainda.
+Modelo de detecção de anomalias por Z-Score espacial: compara cada painel
+contra seus pares no campo (temperatura, corrente DC) para classificar
+Sujeira/Sobreaquecimento/Sobrecorrente/Noite, resolvendo o histórico de
+cada painel via o submodelo `timeseries` de sua shell no BaSyx + o
+history-api que ele aponta para (nunca conecta no InfluxDB diretamente) e
+sincronizando alertas com a aba "Alertas IA" do visualizador
+(`POST`/`DELETE /api/alerts`). Limiares configuráveis via
+`config/rules.json` (hot-reload automático se o arquivo mudar em disco) ou
+flags `--z-*`/`--max-*`. Rodar com `just run-ai` (ou `asset-forge model
+run --config config/rules.json`); `--once` faz uma única rodada de
+avaliação.
 
 ## Estrutura
 
@@ -223,12 +253,13 @@ src/
 │   │   └── aas/               # templates IDTA, solar.py (painéis/inversor), submodelos, shell,
 │   │                          # pacote .aasx, databridge.py (config OPC UA -> BaSyx)
 │   ├── integration/
-│   │   └── basyx_client.py   # upload/clear no BaSyx
+│   │   ├── basyx_client.py     # upload/clear no BaSyx
+│   │   ├── sensor_targets.py   # aasserver.json -> targets (submodelo, idShort) + write/read do $value
+│   │   └── timeseries.py       # resolve o submodelo timeseries de cada shell -> Endpoint/Query do history-api
 │   ├── history_api.py    # serviço HTTP fino na frente do InfluxDB (containerizado à parte)
 │   └── cli.py
-├── mock_data/
-│   └── mock_sensor.py    # harness de teste: escreve/lê valores sintéticos direto na API do BaSyx
-├── model/                # reservado para o futuro modelo de IA (vazio hoje)
+├── model/                # detecção de anomalias por Z-Score espacial + sincronização de alertas
+├── data_gen/             # simulação física de sensores (model_pv.py) -> BaSyx + InfluxDB (script isolado, ver seu README)
 └── visualization/         # app FastAPI + Three.js separado (não instalável via pip -e .)
     ├── main.py            # rotas REST (models/tree/metadata/telemetry/alerts)
     ├── basyx_vis/         # cliente BaSyx + reconstrução de árvore de submodelos/telemetria
