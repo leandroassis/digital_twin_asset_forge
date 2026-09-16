@@ -1,0 +1,1 @@
+"""Geração de dados e injeção de falhas da planta solar."""
