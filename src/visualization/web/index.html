@@ -125,12 +125,13 @@
                 <!-- Aba 3: Painel de Alertas e Simulação -->
                 <div id="tab-alerts" class="tab-content">
                     <div class="alert-actions-bar">
-                        <h4>Simulador de Anomalias (IA)</h4>
+                        <h4>Injeção de Falhas</h4>
                         <div class="simulation-buttons">
-                            <button class="btn-sim overheat" onclick="window.triggerSimulatedAlert('Sobreaquecimento')">🔥 Sobreaquecimento</button>
-                            <button class="btn-sim dirt" onclick="window.triggerSimulatedAlert('Sujeira')">🧹 Sujeira</button>
-                            <button class="btn-sim overcurrent" onclick="window.triggerSimulatedAlert('Sobrecorrente')">⚡ Sobrecorrente</button>
-                            <button class="btn-sim night" onclick="window.triggerSimulatedAlert('Noite')">🌙 Modo Noturno</button>
+                            <button class="btn-sim overheat" onclick="window.triggerSimulatedFault('Sobreaquecimento')">🔥 Sobreaquecimento</button>
+                            <button class="btn-sim dirt" onclick="window.triggerSimulatedFault('Sujeira')">🧹 Sujeira</button>
+                            <button class="btn-sim overcurrent" onclick="window.triggerSimulatedFault('Sobrecorrente')">⚡ Sobrecorrente</button>
+                            <button class="btn-sim night" onclick="window.triggerSimulatedFault('Noite')">🌙 Modo Noturno</button>
+                            <button class="btn-sim clear-fault" onclick="window.clearSimulatedFault()">✅ Operação Normal</button>
                         </div>
                     </div>
                     <div id="active-alerts-list" class="alerts-list">

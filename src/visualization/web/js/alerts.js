@@ -14,7 +14,8 @@ export class AlertManager {
         this.lastListSignature = null;
 
         // Expor a função global para os botões HTML de simulação
-        window.triggerSimulatedAlert = (errorType) => this.triggerSimulation(errorType);
+        window.triggerSimulatedFault = (faultType) => this.triggerFault(faultType);
+        window.clearSimulatedFault = () => this.clearFault();
 
         this.fetchAlerts();
         setInterval(() => this.fetchAlerts(), ALERT_POLL_INTERVAL_MS);
@@ -100,34 +101,70 @@ export class AlertManager {
         }
     }
 
-    async triggerSimulation(errorType) {
-        // ALTERADO PARA QUE O PAINEL A SER TESTADO SEJA ESCOLHIDO
+    async triggerFault(faultType) {
         const elementId = this.getSelectedElementId?.();
 
         if (!elementId) {
-            window.alert("Selecione um painel antes de simular uma anomalia.");
+            window.alert("Selecione um painel antes de aplicar uma falha.");
             return;
         }
-        
+
         const payload = {
             element_id: elementId,
-            error_type: errorType,
-            severity: errorType === 'Sobreaquecimento' ? 'critical' : 'warning',
-            message: `Alerta detectado pelo Modelo de IA: ${errorType} no elemento ${elementId}`
+            fault_type: faultType
         };
 
         try {
-            const res = await fetch('/api/alerts', {
+            const res = await fetch('/api/faults', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
 
-            if (res.ok) {
-                this.fetchAlerts();
+            if (!res.ok) {
+                throw new Error(`Falha na requisição: HTTP ${res.status}`);
             }
+
+            window.alert(
+                `Falha "${faultType}" ativada no elemento ${elementId}.`
+            );
         } catch (exc) {
-            console.error("Erro ao registrar alerta simulado:", exc);
+            console.error("Erro ao ativar falha simulada:", exc);
+            window.alert("Não foi possível ativar a falha.");
+        }
+    }
+
+
+    async clearFault() {
+        const elementId = this.getSelectedElementId?.();
+
+        if (!elementId) {
+            window.alert("Selecione um painel antes de remover a falha.");
+            return;
+        }
+
+        try {
+            const encodedElementId = encodeURIComponent(elementId);
+
+            const res = await fetch(`/api/faults/${encodedElementId}`, {
+                method: 'DELETE'
+            });
+
+            if (res.status === 404) {
+                window.alert("O painel selecionado não possui uma falha ativa.");
+                return;
+            }
+
+            if (!res.ok) {
+                throw new Error(`Falha na requisição: HTTP ${res.status}`);
+            }
+
+            window.alert(
+                `Operação normal restaurada no elemento ${elementId}.`
+            );
+        } catch (exc) {
+            console.error("Erro ao remover falha simulada:", exc);
+            window.alert("Não foi possível remover a falha.");
         }
     }
 }

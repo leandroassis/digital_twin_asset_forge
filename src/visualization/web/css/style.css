@@ -539,6 +539,16 @@ html, body {
 .btn-sim.overcurrent:hover { background: rgba(255, 109, 0, 0.2); border-color: var(--accent-orange); color: var(--accent-orange); }
 .btn-sim.night:hover { background: rgba(55, 71, 79, 0.4); border-color: #78909c; color: #b0bec5; }
 
+.btn-sim.clear-fault {
+    grid-column: 1 / -1;
+}
+
+.btn-sim.clear-fault:hover {
+    background: rgba(76, 175, 80, 0.2);
+    border-color: #4caf50;
+    color: #81c784;
+}
+
 .alerts-list {
     display: flex;
     flex-direction: column;
