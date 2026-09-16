@@ -1,0 +1,61 @@
+# Application-layer services, on top of the base BaSyx stack in
+# docker-compose.yml (aas-environment, aas-registry, influxdb,
+# history-api). This file is never brought up alone -- `depends_on` below
+# references services defined in the other file, so it only resolves when
+# both are merged together. `just up` runs both files as one project;
+# `just basyx-up` continues to bring up only docker-compose.yml alone,
+# unaffected by this file's existence.
+#
+# Each service here uses `network_mode: host` (Linux-only) instead of the
+# bridge network + service-name DNS the base stack uses: model, data-gen
+# and visualization all talk to the base services (and to each other,
+# e.g. model -> visualization's /api/alerts) via plain "localhost:<port>",
+# which is also exactly what the AAS `timeseries` submodel's `Endpoint`
+# was baked with at `asset-forge convert` time (asset_forge/config.py's
+# HISTORY_API_HOST default) and what a host-run process already uses.
+# Host networking means these containers see "localhost" exactly the way
+# the host does, so no container-specific hostnames/CLI overrides are
+# needed anywhere -- the alternative (bridge networking + service-name
+# hostnames for these three) would require re-baking every already-
+# uploaded AAS package with a different history-api Endpoint depending on
+# where the reader runs, which defeats the point of that submodel being
+# resolved once at convert time.
+services:
+  model:
+    build:
+      context: ..
+      dockerfile: infra/model/Dockerfile
+    container_name: asset-forge-model
+    network_mode: host
+    volumes:
+      - ../config:/app/config:ro
+    depends_on:
+      - aas-environment
+    restart: unless-stopped
+
+  data-gen:
+    build:
+      context: ..
+      dockerfile: infra/data-gen/Dockerfile
+    container_name: asset-forge-data-gen
+    network_mode: host
+    volumes:
+      - ./databridge:/app/infra/databridge:ro
+      - ../src/data_gen/dataset:/app/src/data_gen/dataset
+    depends_on:
+      - aas-environment
+      - influxdb
+    restart: unless-stopped
+
+  visualization:
+    build:
+      context: ..
+      dockerfile: infra/visualization/Dockerfile
+    container_name: asset-forge-visualization
+    network_mode: host
+    volumes:
+      - ../assets:/app/assets:ro
+    depends_on:
+      - aas-environment
+      - aas-registry
+    restart: unless-stopped
