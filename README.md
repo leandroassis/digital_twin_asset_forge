@@ -62,6 +62,10 @@ just basyx-upload solar-plant  # limpa e envia o .aasx do projeto para o BaSyx
 just basyx-clear            # limpa shells/submodelos e seus descriptors no registry
 just basyx-down             # para e remove todos os containers Docker
 
+just up                     # basyx-up + model/data-gen/visualization como containers próprios (ver "Execução containerizada" abaixo)
+just down                   # para e remove TODOS os containers (BaSyx + model/data-gen/visualization)
+
+# Alternativa local (sem Docker) para model/data-gen/visualization, um de cada vez:
 just simulate-profiles      # gera o perfil de perturbação de cada painel (data_gen, opcional)
 just simulate               # loop de escrita+leitura+historização em cada Property opcua com dados fisicamente simulados (--once p/ uma rodada só)
 just run-ai                 # roda o modelo de detecção de anomalias (Z-Score) via BaSyx/history-api
@@ -158,8 +162,8 @@ Outros dois bugs reais encontrados no mesmo processo, ambos já contornados:
 
 ### Visualizador web
 
-`just viz-up` sobe, fora do `docker-compose` (roda direto via
-`python -m uvicorn`), o app FastAPI + Three.js em
+`just viz-up` (local, via `python -m uvicorn`) ou `just up` (container, ver
+"Execução containerizada" abaixo) sobem o app FastAPI + Three.js em
 [src/visualization/](src/visualization/) em **http://localhost:8000**. Ele
 lê tudo ao vivo — nada mockado do lado do visualizador:
 
@@ -179,6 +183,15 @@ lê tudo ao vivo — nada mockado do lado do visualizador:
 Requer `just basyx-up` + `just basyx-upload solar-plant` rodando para ter
 dado real pra mostrar; sem isso, a árvore aparece vazia e o status "BaSyx
 Offline".
+
+**WebGL é opcional, não obrigatório:** confirmado ao vivo que
+`THREE.WebGLRenderer` pode falhar ao criar contexto (navegador sandboxed,
+VM/desktop remoto sem GPU repassada, aceleração de hardware desligada) —
+`Viewer3D` captura essa falha na sua própria construção e degrada
+graciosamente (mostra "Visualização 3D indisponível" no lugar do canvas 3D)
+em vez de travar a inicialização inteira da SPA; árvore de ativos,
+metadados AAS, séries temporais e alertas continuam funcionando
+normalmente sem WebGL nenhum.
 
 ### Histórico de sensores (InfluxDB + history-api)
 
@@ -236,6 +249,40 @@ flags `--z-*`/`--max-*`. Rodar com `just run-ai` (ou `asset-forge model
 run --config config/rules.json`); `--once` faz uma única rodada de
 avaliação.
 
+### Execução containerizada (`just up`)
+
+`model`, `data-gen` e `visualization` são processos independentes — cada um
+sua própria CLI/servidor, cada um só conversando com o resto do sistema via
+API HTTP (BaSyx, history-api, e entre si, ver [INTEGRATION.md](INTEGRATION.md)),
+nunca por import direto de código de outro módulo em tempo de execução.
+Além de rodar cada um localmente (`just simulate`/`just run-ai`/`just
+viz-up`, seção anterior), os três também sobem como containers próprios via
+`infra/docker-compose.apps.yml` (Dockerfiles em `infra/model/`,
+`infra/data-gen/`, `infra/visualization/`):
+
+```bash
+just up      # sobe basyx-up + os três containers, tudo junto
+just down    # derruba tudo (BaSyx + os três)
+```
+
+`just basyx-up`/`just basyx-down` continuam existindo e inalterados — só
+sobem a stack BaSyx em si; `just up`/`just down` são a versão que também
+sobe/derruba `model`/`data-gen`/`visualization`. Depois de `just up`,
+`asset-forge convert`/`basyx upload` continuam rodando localmente (não
+viraram serviço — são comandos de um-tiro, não processos de longa duração);
+suba a planta primeiro (seção "BaSyx local + UI" acima) para os três
+containers terem dado real com o que trabalhar.
+
+Os três usam `network_mode: host` (só Linux) em vez da rede
+bridge/nomes-de-serviço que o resto do `docker-compose.yml` usa — o motivo
+é que o submodelo `timeseries` de cada painel já grava `Endpoint =
+http://localhost:8090` no momento do `convert` (não existe flag de CLI pra
+mudar isso hoje), então esses três containers precisam ver "localhost" da
+mesma forma que o host vê, sem precisar reconverter/reenviar a planta com
+outro endpoint. Ver o comentário no topo de
+[infra/docker-compose.apps.yml](infra/docker-compose.apps.yml) e
+DESCRIPTION.md, seção 13, para o detalhe completo.
+
 ## Estrutura
 
 ```
@@ -264,6 +311,16 @@ src/
     ├── main.py            # rotas REST (models/tree/metadata/telemetry/alerts)
     ├── basyx_vis/         # cliente BaSyx + reconstrução de árvore de submodelos/telemetria
     └── web/               # SPA (Three.js, árvore de ativos, dashboard, alertas)
+```
+
+```
+infra/
+├── docker-compose.yml       # stack BaSyx (aas-environment, registry, UI, databridge, influxdb, history-api) -- just basyx-up
+├── docker-compose.apps.yml  # model/data-gen/visualization como containers -- just up (junto com o arquivo acima)
+├── history-api/Dockerfile
+├── model/Dockerfile
+├── data-gen/Dockerfile
+└── visualization/Dockerfile
 ```
 
 ## Testes

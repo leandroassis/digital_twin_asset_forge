@@ -17,6 +17,74 @@ local (`data_gen/send_to_basyx.py`, ver DESCRIPTION.md, seção 9) que
 escreve/lê direto nessa mesma API para provar que o caminho todo está
 unificado. Este documento cobre como fazer o mesmo manualmente.
 
+## Fluxo de integração entre os módulos
+
+`asset_forge`, `data_gen`, `model` e `visualization` são processos
+independentes — cada um sua própria CLI ou servidor, cada um rodando
+sozinho (local ou como container, ver DESCRIPTION.md, seção 13) — que só
+trocam dados entre si via chamada HTTP a uma API de outro serviço. Nenhum
+importa código de outro em tempo de execução para trocar dados (o único
+compartilhamento é o pacote Python `asset_forge` em si, quando instalado —
+isso não acopla processos, só reaproveita código entre eles). Visão geral
+de quem chama quem:
+
+**Setup (uma vez, manual, no host):**
+```
+asset-forge convert  →  asset-forge basyx upload  →  BaSyx
+```
+
+**Escrita de sensores (contínua, um round por intervalo):**
+```
+data-gen  →  PATCH BaSyx .../$value       (valor atual, lido de volta pra confirmar)
+data-gen  →  InfluxDB write               (histórico, batch por rodada)
+```
+
+**Leitura + alertas (contínua, um round por intervalo):**
+```
+model  →  GET BaSyx /shells + /submodel-elements   (só uma vez, no startup)
+model  →  GET history-api /series/{id}             (a cada rodada, concorrente)
+model  →  POST/DELETE visualization /api/alerts    (a cada rodada, se algo mudou)
+```
+
+**Leitura sob demanda (a cada clique na SPA):**
+```
+visualization  →  GET BaSyx (shell → submodelo → Endpoint/Query)  →  GET history-api /series/{id}
+```
+
+Cada seta é uma chamada HTTP simples com um contrato pequeno e explícito
+(um id plano, um valor, uma URL) — nunca uma query Flux, nunca uma
+estrutura de dados Python compartilhada entre processos:
+
+- **`asset_forge` → BaSyx**: `POST /upload` (`.aasx` inteiro) + registro de
+  descriptors no registry — comando manual, um-tiro, nunca um serviço de
+  longa duração (ver "O que fica fora do escopo atual" em DESCRIPTION.md).
+- **`data_gen` → BaSyx**: `PATCH .../submodel-elements/{idShortPath}/$value`
+  por variável, `GET` do mesmo endpoint pra confirmar — seção 2/3 abaixo,
+  mesmo contrato que um DataBridge real usaria.
+- **`data_gen` → InfluxDB**: escreve direto (é o único módulo, junto do
+  history-api, que sabe que o backend é InfluxDB — todo o resto só conhece
+  o history-api). Um ponto por asset por rodada, ver DESCRIPTION.md seção
+  9/10.
+- **`model` → BaSyx**: só leitura, e só **uma vez** por processo (`GET
+  /shells` paginado + `GET .../submodel-elements` de cada `timeseries`,
+  resolvendo `Endpoint`/`Query` de cada painel) — não repete isso a cada
+  rodada de avaliação (ver DESCRIPTION.md, seção 12, para o porquê).
+- **`model` → history-api**: `GET /series/{asset_id}?count=1` por painel,
+  a cada rodada (concorrente, `--max-workers`) — nunca InfluxDB direto.
+- **`model` → `visualization`**: `POST`/`DELETE /api/alerts` — o único
+  jeito de um alerta chegar na SPA; sem `model run` ativo, a aba "Alertas
+  IA" fica sempre vazia.
+- **`visualization` → BaSyx + history-api**: mesmo padrão de leitura do
+  `model` (shell → submodelo `timeseries` → `Endpoint`/`Query` →
+  history-api), mas resolvido sob demanda por elemento selecionado na SPA,
+  não pra todo o campo de uma vez.
+
+O restante deste documento mostra, com `curl`, exatamente os mesmos
+endpoints que `data_gen`/`model`/`visualization` chamam — útil pra
+depurar qualquer um deles isoladamente (ex.: `model` não está gerando
+alertas? confirme manualmente que `GET /series/{id}` na seção 4 abaixo
+devolve dado real antes de suspeitar do código do modelo).
+
 ## Pré-requisitos
 
 ```bash

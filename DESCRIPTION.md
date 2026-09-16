@@ -426,6 +426,24 @@ do visualizador:
   elemento, populado pelo modelo de detecção de anomalias (seção 12) quando
   ele está rodando (`just run-ai`) via `POST`/`DELETE /api/alerts`.
 
+**WebGL é opcional para o resto da SPA funcionar.** `Viewer3D` (`viewer3d.js`)
+envolve sua própria construção (`_initScene`/`_initRaycaster`/`_animate`)
+num try/catch: `THREE.WebGLRenderer` pode lançar uma exceção síncrona se o
+navegador não conseguir criar um contexto WebGL (confirmado ao vivo: um
+navegador sandboxed/VM/desktop remoto sem GPU repassada, ou aceleração de
+hardware desligada, produz exatamente esse erro). Antes dessa correção, essa
+exceção não-capturada abortava o construtor inteiro de `AppController`
+(`Viewer3D` é instanciado primeiro, antes da árvore/dashboard/alertas) —
+travando a SPA inteira numa tela de "Carregando..." permanente mesmo com o
+backend/BaSyx 100% saudáveis, já que `loadProjects()`/`loadBaSyxTree()`
+(mais abaixo no mesmo construtor) nunca chegavam a rodar. Agora um flag
+`available` gate cada método público de `Viewer3D` que toca `THREE.*`
+(`loadModel`/`selectElement`/`setAlertState`/`clearAlertState`/`resetCamera`);
+`selectElement` continua notificando o callback de seleção (que dispara
+metadados/telemetria) mesmo sem WebGL, só pula a parte de destacar/focar a
+malha. Sem WebGL, o canvas é escondido e uma mensagem
+("Visualização 3D indisponível...") aparece no lugar.
+
 ## 12. `src/model/`
 
 Modelo de detecção de anomalias por Z-Score espacial sobre os dados
@@ -447,7 +465,16 @@ versão anterior deste módulo:
   seria puro overhead. `Query` já é o próprio `asset_tag` (`PANEL-1529520`)
   e o `GlobalId` IFC vem direto do `id` da shell (`.../aas/ifc/{GlobalId}`),
   sem precisar ler `infra/databridge/aasserver.json` nem assumir host/porta
-  do InfluxDB.
+  do InfluxDB. As leituras de cada painel são buscadas concorrentemente
+  (`--max-workers`, default 16, `ThreadPoolExecutor`) em vez de uma por
+  vez: um driver de sensor real (seção 9) continua escrevendo rodadas novas
+  enquanto essa varredura roda, então uma varredura sequencial de 600+
+  painéis (confirmado ao vivo) corre o risco de ler uma mistura de duas
+  rodadas diferentes — alguns painéis já refletindo a rodada seguinte,
+  virando um outlier de Z-Score espúrio contra o resto. Concorrência
+  encolhe essa janela; não elimina o risco por completo (não há isolamento
+  de snapshot entre painéis neste design), mas quanto mais rápida a
+  varredura, menor a chance de uma rodada trocar no meio dela.
 - **[detector.py](src/model/detector.py)** — `AnomalyDetector.evaluate_batch`
   calcula o Z-Score espacial (`(x - média) / desvio`) de temperatura e
   corrente DC de cada painel contra seus pares no campo naquela rodada, e
@@ -465,6 +492,86 @@ versão anterior deste módulo:
   normal desde a rodada anterior.
 - **[cli.py](src/model/cli.py)** — loop de avaliação (`asset-forge model
   run` / `just run-ai`); `--once` faz uma única rodada.
+
+## 13. Execução containerizada (`just up`)
+
+`model`, `data-gen` e `visualization` são processos independentes de
+verdade — cada um sua própria CLI/servidor, cada um só integrando com o
+resto do sistema via chamada HTTP a uma API de outro serviço (BaSyx,
+history-api, e a `visualization`'s própria `/api/alerts`), nunca por import
+direto de código de outro módulo em tempo de execução (ver
+[INTEGRATION.md](INTEGRATION.md) para o diagrama completo de quem chama
+quem). Isso já era verdade antes de qualquer container existir — rodando
+cada um localmente via `just simulate`/`just run-ai`/`just viz-up`, três
+processos Python separados na mesma máquina, cada um só conversando com
+BaSyx/history-api pela rede. Containerizar cada um em
+[infra/model/Dockerfile](infra/model/Dockerfile),
+[infra/data-gen/Dockerfile](infra/data-gen/Dockerfile) e
+[infra/visualization/Dockerfile](infra/visualization/Dockerfile),
+orquestrados por [infra/docker-compose.apps.yml](infra/docker-compose.apps.yml)
+(`just up`/`just down`), só torna essa independência explícita na forma de
+deploy também.
+
+### Dependências por imagem
+
+- **model** e **data-gen** instalam o pacote `asset-forge` completo
+  (`pip install -e .`, mesmo `pyproject.toml` do resto do projeto) —
+  `model/collector.py` importa `asset_forge.integration.timeseries`
+  diretamente, e `data_gen` (que não é um pacote instalável, sem
+  `__init__.py`, ver seu próprio README) importa
+  `asset_forge.integration.sensor_targets`/`export.aas.solar`/`config`.
+  Mais pesado que uma imagem mínima (arrasta `ifcopenshell`/`pyDEXPI`/
+  `pygltflib`/`basyx-python-sdk`, nenhum dos quais esses dois módulos usam
+  de fato), mas mantém o código idêntico ao que já roda localmente, sem
+  duplicar/extrair nada.
+- **visualization** não instala o pacote `asset-forge` — só `ifcopenshell`
+  (usado por `basyx_service.py::compress_uuid_to_ifc_guid` e pelo gerador
+  legado de `express_map.json`) e sua própria pilha web
+  (`fastapi`/`uvicorn`/`pydantic`/`requests`), mesma lógica de
+  `infra/history-api/Dockerfile` ficar mínimo: nenhuma das dependências
+  pesadas do resto do pacote é usada aqui.
+
+### Por que `network_mode: host`
+
+Os três usam `network_mode: host` (Linux) em vez da rede
+bridge/nomes-de-serviço que o resto do `docker-compose.yml` usa
+(`aas-environment`, `influxdb`, etc. resolvidos por nome de serviço dentro
+da rede Compose). O motivo é concreto: `asset-forge convert` não expõe
+nenhuma flag de CLI pra configurar o host/porta do history-api (só
+`ASSET_FORGE`-prefixed env vars, ver `config.py`) — toda vez que ele roda,
+o `Endpoint` gravado no submodelo `timeseries` de cada painel é sempre
+`http://{HISTORY_API_HOST}:{HISTORY_API_PORT}`, cujo default é
+`localhost:8090`. Se `convert`/`basyx upload` rodam no host (que é o caso
+recomendado — ver seção anterior, não são serviços de longa duração) e
+depois `model`/`visualization` leem esse mesmo `Endpoint` de dentro de um
+container com rede bridge, "localhost" dentro do container resolveria pro
+próprio container, não pro host onde `history-api` de fato está publicado
+— quebrando a leitura sem tocar em nenhum código.
+
+`network_mode: host` faz esses três containers verem "localhost" exatamente
+como o host vê (todo serviço da stack base publica sua porta no host via
+`ports:`), então o `Endpoint` já gravado continua correto sem reconverter
+nada, e nenhuma variável de ambiente/flag precisa ser passada pra apontar
+pra nomes de serviço Docker (`aas-environment`, `influxdb`, `visualization`)
+-- os defaults de CLI de cada módulo (todos `localhost`, ver `config.py`)
+já funcionam como estão. O trade-off é: sem isolamento de rede pra esses
+três, e só funciona em Linux (`network_mode: host` não tem efeito real no
+Docker Desktop de Mac/Windows) — aceitável aqui porque toda essa stack já é
+documentada como um dev stack local, nunca um deploy de produção.
+
+### `just up`/`just down`
+
+`docker compose -f infra/docker-compose.yml -f infra/docker-compose.apps.yml
+up -d` (o que `just up` roda, depois de esperar a stack base via
+`basyx-up`) mescla os dois arquivos num projeto Compose só — os serviços de
+`docker-compose.apps.yml` (`depends_on: - aas-environment`, etc.)
+referenciam serviços definidos no OUTRO arquivo, então só resolvem quando
+os dois sobem juntos; ele nunca é pensado pra subir sozinho.
+`just basyx-up`/`just basyx-down` continuam existindo e inalterados (só o
+arquivo base); `just up`/`just down` sobem/derrubam os dois arquivos
+juntos. Nenhum dos dois roda `convert`/`basyx upload` automaticamente —
+esses continuam comandos manuais de um-tiro (ver "O que fica fora do
+escopo atual" abaixo).
 
 ## O que fica fora do escopo atual
 
@@ -484,3 +591,7 @@ versão anterior deste módulo:
   um ao outro — parâmetros de simulação (`--mode`, `--seed`,
   `--irradiance-noise-std`, etc., seção 9) só são configuráveis via CLI
   (`just simulate-profiles`/`just simulate`), não pela SPA.
+- **`convert`/`basyx upload` como serviço**: não fazem parte de `just up`
+  nem de nenhum `docker-compose*.yml` (seção 13) — são comandos manuais de
+  um-tiro (rodam, terminam, não ficam "up"), sempre disparados à mão no
+  host antes de subir/usar o resto da stack.
