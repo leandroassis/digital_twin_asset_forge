@@ -83,6 +83,33 @@
             <!-- Tooltip/Badge de Informação de Hover 3D -->
             <div id="hover-tooltip" class="hover-tooltip"></div>
 
+            <!-- Legenda Flutuante de Cores 3D -->
+            <div id="legend-3d" class="legend-3d">
+                <div class="legend-header">🎨 Legenda de Status 3D</div>
+                <div class="legend-items">
+                    <div class="legend-item">
+                        <span class="dot selected"></span>
+                        <span>Elemento Selecionado</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="dot overheat"></span>
+                        <span>Sobreaquecimento</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="dot dirt"></span>
+                        <span>Sujeira / Sombreamento</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="dot overcurrent"></span>
+                        <span>Sobrecorrente</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="dot night"></span>
+                        <span>Operação Noturna</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- Controle Flutuante de Câmera -->
             <div class="floating-controls">
                 <button id="btn-view-top" class="btn-icon" title="Visão Superior">🔝</button>
@@ -125,12 +152,10 @@
                 <!-- Aba 3: Painel de Alertas e Simulação -->
                 <div id="tab-alerts" class="tab-content">
                     <div class="alert-actions-bar">
-                        <h4>Simulador de Anomalias (IA)</h4>
+                        <h4>Estado de Operação Solar</h4>
                         <div class="simulation-buttons">
-                            <button class="btn-sim overheat" onclick="window.triggerSimulatedAlert('Sobreaquecimento')">🔥 Sobreaquecimento</button>
-                            <button class="btn-sim dirt" onclick="window.triggerSimulatedAlert('Sujeira')">🧹 Sujeira</button>
-                            <button class="btn-sim overcurrent" onclick="window.triggerSimulatedAlert('Sobrecorrente')">⚡ Sobrecorrente</button>
-                            <button class="btn-sim night" onclick="window.triggerSimulatedAlert('Noite')">🌙 Modo Noturno</button>
+                            <button id="btn-mode-day" class="btn-mode day active" onclick="window.setOperationMode('day')">☀️ Modo Dia</button>
+                            <button id="btn-mode-night" class="btn-mode night" onclick="window.setOperationMode('night')">🌙 Modo Noturno</button>
                         </div>
                     </div>
                     <div id="active-alerts-list" class="alerts-list">

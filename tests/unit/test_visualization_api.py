@@ -53,3 +53,35 @@ def test_telemetry_endpoint():
     data = res.json()
     assert "metrics" in data
     assert "timestamps" in data
+
+def test_simulation_mode_endpoint():
+    # Garantir retorno inicial
+    get_res = client.get("/api/simulation/mode")
+    assert get_res.status_code == 200
+    assert "mode" in get_res.json()
+
+    # Definir para modo noturno
+    post_res = client.post("/api/simulation/mode", json={"mode": "night"})
+    assert post_res.status_code == 200
+    assert post_res.json()["mode"] == "night"
+
+    # Verificar presença de alerta noturno
+    alerts_res = client.get("/api/alerts")
+    assert alerts_res.status_code == 200
+    alerts = alerts_res.json()["alerts"]
+    assert any(a["error_type"] == "Noite" for a in alerts)
+
+    # Verificar transformação da telemetria no modo noturno
+    telem_res = client.get("/api/telemetry/TEST_PANEL_001")
+    assert telem_res.status_code == 200
+    telem_data = telem_res.json()
+    assert telem_data.get("mode") == "night"
+    metrics = telem_data.get("metrics", {})
+    if "luminosity" in metrics:
+        assert all(v == 0.0 for v in metrics["luminosity"])
+
+    # Restaurar para modo diurno
+    reset_res = client.post("/api/simulation/mode", json={"mode": "day"})
+    assert reset_res.status_code == 200
+    assert reset_res.json()["mode"] == "day"
+

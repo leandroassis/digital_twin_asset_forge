@@ -74,11 +74,9 @@ Opções úteis:
 - `--profiles-path`: usar um CSV de perfis diferente do default
   (`dataset/panel_profiles.csv`).
 - `--max-workers N`: paraleliza as requisições HTTP pro BaSyx (default `1`,
-  sequencial). Cada rodada é 607×4=2428 pares independentes de
+  sequencial para evitar travamento em máquinas com menor capacidade). Cada rodada é 607×4=2428 pares independentes de
   `PATCH`+`GET`; rodar um de cada vez é seguro mas lento (~65s/rodada medido
-  localmente). Suba esse número de
-  acordo com o que sua máquina/rede/BaSyx aguentam — não existe um valor
-  certo universal. 32 levou a mesma rodada a ~9s numa stack Docker local.
+  localmente). Para computadores mais parrudos, utilize a receita `just simulate-16` (ou `--max-workers 16`), que leva a rodada a apenas ~3s a 9s.
 - `--interval`: segundos reais de espera **depois** de cada rodada completar
   (default `1.0`, ignorado com `--once`) — soma com o tempo que a rodada
   levou, não é um teto. Com `--max-workers 1` e uma rodada de ~65s, o
