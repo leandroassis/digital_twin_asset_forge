@@ -332,9 +332,23 @@ export class Viewer3D {
     }
 
     // Retorna true se o elemento foi encontrado na cena e pintado -- false
-    // enquanto o GLB ainda não carregou (quem chama tenta de novo depois).
     setAlertState(globalId, alertType) {
         if (!this.available) return false;
+
+        // Tratar alerta global de operação noturna da planta
+        if (globalId === "SOLAR_PLANT_FIELD" || alertType === "Noite") {
+            for (const [key, anchor] of this.meshByGlobalIdMap.entries()) {
+                const nameLower = (key + (anchor.userData?.name || "") + (anchor.name || "")).toLowerCase();
+                if (nameLower.includes("solar") || nameLower.includes("panel") || nameLower.includes("pv") || nameLower.includes("modul")) {
+                    this.alertStatesMap.set(this._resolveGlobalId(anchor), 'Noite');
+                    if (anchor !== this.selectedAnchor) {
+                        this._applyMaterial(anchor, this.materials.alertNight);
+                    }
+                }
+            }
+            return true;
+        }
+
         const anchor = this._lookupMesh(globalId);
         if (!anchor) return false;
 
@@ -356,6 +370,20 @@ export class Viewer3D {
 
     clearAlertState(globalId) {
         if (!this.available) return;
+
+        if (globalId === "SOLAR_PLANT_FIELD") {
+            for (const [key, anchor] of this.meshByGlobalIdMap.entries()) {
+                const resolvedId = this._resolveGlobalId(anchor);
+                if (this.alertStatesMap.get(resolvedId) === 'Noite') {
+                    this.alertStatesMap.delete(resolvedId);
+                    if (anchor !== this.selectedAnchor) {
+                        this._restoreMaterial(anchor);
+                    }
+                }
+            }
+            return;
+        }
+
         const anchor = this._lookupMesh(globalId);
         if (!anchor) return;
 

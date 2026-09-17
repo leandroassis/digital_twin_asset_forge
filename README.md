@@ -68,6 +68,7 @@ just down                   # para e remove TODOS os containers (BaSyx + model/d
 # Alternativa local (sem Docker) para model/data-gen/visualization, um de cada vez:
 just simulate-profiles      # gera o perfil de perturbação de cada painel (data_gen, opcional)
 just simulate               # loop de escrita+leitura+historização em cada Property opcua com dados fisicamente simulados (--once p/ uma rodada só)
+just simulate-16            # loop de escrita+leitura+historização em cada Property opcua com dados fisicamente simulados (16 workers)
 just run-ai                 # roda o modelo de detecção de anomalias (Z-Score) via BaSyx/history-api
 just viz-up                 # inicia o servidor FastAPI/Uvicorn do visualizador 3D (http://localhost:8000)
 
@@ -229,8 +230,10 @@ valores fisicamente simulados (via o modelo de painel fotovoltaico em
 confirmar, e historiza a rodada no InfluxDB — dirigido pelo mesmo
 `infra/databridge/aasserver.json` que o DataBridge real usaria, então
 exercita exatamente os mesmos alvos. `--once` faz uma rodada só;
-`--interval` controla o intervalo entre rodadas em loop. `just
-simulate-profiles` (opcional, ver [src/data_gen/README.md](src/data_gen/README.md))
+`--interval` controla o intervalo entre rodadas em loop.
+
+**Simulação de Alto Desempenho (`just simulate-16`):**
+Por padrão, `just simulate` utiliza um perfil sequencial (1 worker) para garantir compatibilidade e evitar sobrecarga em máquinas menos parrudas. Para computadores de alto desempenho, o comando `just simulate-16` executa a simulação com 16 threads paralelas em conjunto (`--max-workers 16`), reduzindo o tempo de varredura completa dos 607 painéis de ~65s para apenas ~3s por rodada. `just simulate-profiles` (opcional, ver [src/data_gen/README.md](src/data_gen/README.md))
 gera antes um perfil de perturbação por painel, pra painéis não reportarem
 todos o mesmo valor e pra exercitar o modelo de anomalias com desvios
 propositais.

@@ -115,86 +115,189 @@ export class DashboardComponent {
         if (!this.telemetryHeader || !this.telemetryCharts) return;
 
         const isSolar = telemetryData.type === 'SolarPanel';
-        this.telemetryHeader.innerHTML = `
-            <div class="element-title">${isSolar ? '☀️ Módulo Fotovoltaico' : '⚡ Inversor Solar'}</div>
-            <div class="element-subtitle">ID: <code>${telemetryData.globalId}</code></div>
-        `;
+        const currentHeaderId = this.telemetryHeader.getAttribute('data-global-id');
+        
+        if (currentHeaderId !== telemetryData.globalId) {
+            this.telemetryHeader.setAttribute('data-global-id', telemetryData.globalId);
+            this.telemetryHeader.innerHTML = `
+                <div class="element-title">${isSolar ? '☀️ Módulo Fotovoltaico' : '⚡ Inversor Solar'}</div>
+                <div class="element-subtitle">ID: <code>${telemetryData.globalId}</code></div>
+            `;
+            this.telemetryCharts.innerHTML = '';
+        }
 
-        this.telemetryCharts.innerHTML = '';
         const metrics = telemetryData.metrics || {};
-        const timestamps = telemetryData.timestamps || [];
+        const titleMap = {
+            luminosity: 'Intensidade Luminosa (W/m²)',
+            temperature: 'Temperatura (°C)',
+            currentDC: 'Corrente CC (A)',
+            voltageDC: 'Tensão CC (V)',
+            voltageAC: 'Tensão CA (V)',
+            currentAC: 'Corrente CA (A)',
+            powerAC: 'Potência CA (kW)'
+        };
 
         for (const [metricKey, values] of Object.entries(metrics)) {
-            const card = document.createElement('div');
-            card.className = 'chart-card';
-            
-            const titleMap = {
-                luminosity: 'Intensidade Luminosa (W/m²)',
-                temperature: 'Temperatura (°C)',
-                currentDC: 'Corrente CC (A)',
-                voltageDC: 'Tensão CC (V)',
-                voltageAC: 'Tensão CA (V)',
-                currentAC: 'Corrente CA (A)',
-                powerAC: 'Potência CA (kW)'
-            };
-
-            const label = titleMap[metricKey] || metricKey;
+            if (!values || values.length === 0) continue;
             const currentVal = values[values.length - 1];
+            const prevVal = values.length > 1 ? values[values.length - 2] : currentVal;
 
-            card.innerHTML = `
-                <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-                    <span style="font-weight:600; font-size:12px;">${label}</span>
-                    <span style="color:var(--accent-cyan); font-weight:700; font-size:13px;">${currentVal}</span>
-                </div>
-                <canvas class="chart-canvas" id="canvas-${metricKey}"></canvas>
-            `;
+            let trendSymbol = '→';
+            let trendClass = 'trend-flat';
+            if (currentVal > prevVal) {
+                trendSymbol = '↑';
+                trendClass = 'trend-up';
+            } else if (currentVal < prevVal) {
+                trendSymbol = '↓';
+                trendClass = 'trend-down';
+            }
 
-            this.telemetryCharts.appendChild(card);
+            let valColor = 'var(--accent-cyan)';
+            if (metricKey === 'temperature' && currentVal >= 47.0) {
+                valColor = 'var(--accent-red)';
+            } else if (metricKey === 'currentDC' && currentVal <= 13.0) {
+                valColor = 'var(--accent-yellow)';
+            } else if (metricKey === 'currentDC' && currentVal >= 18.0) {
+                valColor = 'var(--accent-orange)';
+            }
 
-            // Renderizar gráfico de linha simples em SVG/Canvas
-            setTimeout(() => {
-                const canvasElem = document.getElementById(`canvas-${metricKey}`);
-                if (canvasElem) this._drawSparkline(canvasElem, values);
-            }, 50);
+            let card = document.getElementById(`card-metric-${metricKey}`);
+            let valElem = document.getElementById(`val-metric-${metricKey}`);
+            let canvasElem = document.getElementById(`canvas-${metricKey}`);
+
+            const formattedHtml = `${currentVal} <span class="trend-badge ${trendClass}">${trendSymbol}</span>`;
+
+            if (!card || !canvasElem) {
+                card = document.createElement('div');
+                card.className = 'chart-card';
+                card.id = `card-metric-${metricKey}`;
+
+                const label = titleMap[metricKey] || metricKey;
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-weight:600; font-size:12px;">${label}</span>
+                        <span id="val-metric-${metricKey}" style="color:${valColor}; font-weight:700; font-size:13px;">${formattedHtml}</span>
+                    </div>
+                    <canvas class="chart-canvas" id="canvas-${metricKey}"></canvas>
+                `;
+                this.telemetryCharts.appendChild(card);
+                canvasElem = card.querySelector('canvas');
+            } else if (valElem) {
+                valElem.style.color = valColor;
+                valElem.innerHTML = formattedHtml;
+            }
+
+            if (canvasElem) {
+                this._drawSparkline(canvasElem, values);
+            }
         }
     }
 
-    _drawSparkline(canvas, data) {
+    _drawSparkline(canvas, rawData) {
         const ctx = canvas.getContext('2d');
-        const width = canvas.clientWidth;
-        const height = canvas.clientHeight;
+        const width = canvas.clientWidth || 280;
+        const height = canvas.clientHeight || 120;
         canvas.width = width;
         canvas.height = height;
 
+        // Janela deslizante dos últimos 25 pontos
+        const data = rawData.slice(-25);
         if (data.length < 2) return;
 
-        const min = Math.min(...data);
-        const max = Math.max(...data);
-        const range = (max - min) || 1;
+        const lastVal = data[data.length - 1];
+        
+        // Isolar regime operacional recente (últimos 8 pontos no mesmo regime)
+        // para evitar que quedas/degraus históricos (ex: Noite -> Dia) esmaguem a escala vertical
+        const threshold = Math.max(Math.abs(lastVal) * 0.4, 5.0);
+        const regimePoints = data.slice(-8).filter(v => Math.abs(v - lastVal) <= threshold);
+        const targetPoints = regimePoints.length > 0 ? regimePoints : [lastVal];
+
+        const recentMin = Math.min(...targetPoints);
+        const recentMax = Math.max(...targetPoints);
+        let recentRange = recentMax - recentMin;
+
+        // Margem adaptativa inteligente para destacar micro-flutuações com dinamismo
+        if (recentRange < 0.5) {
+            recentRange = 1.0;
+        }
+
+        const min = recentMin - recentRange * 0.35;
+        const max = recentMax + recentRange * 0.35;
+        let range = max - min;
+        if (range <= 0) range = 1.0;
 
         ctx.clearRect(0, 0, width, height);
 
-        // Desenhar linha
+        // Identificar índice de transição de modo brusca se presente na janela
+        let transitionIndex = -1;
+        for (let i = 1; i < data.length; i++) {
+            if (Math.abs(data[i] - data[i - 1]) > threshold) {
+                transitionIndex = i;
+            }
+        }
+
+        // Desenhar indicador vertical de transição de modo
+        if (transitionIndex > 0) {
+            const transX = (transitionIndex / (data.length - 1)) * (width - 10) + 5;
+            ctx.save();
+            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = 'rgba(255, 214, 0, 0.6)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(transX, 4);
+            ctx.lineTo(transX, height - 4);
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.fillStyle = 'rgba(255, 214, 0, 0.85)';
+            ctx.font = '9px sans-serif';
+            ctx.fillText('⚡ Transição', Math.min(transX + 3, width - 60), 12);
+        }
+
+        // Mapear pontos para a tela com clamping suave nas bordas
+        const points = data.map((val, index) => {
+            const x = (index / (data.length - 1)) * (width - 10) + 5;
+            const normY = (val - min) / range;
+            const clampedNormY = Math.max(0, Math.min(1, normY));
+            const y = height - 10 - clampedNormY * (height - 20);
+            return { x, y, val };
+        });
+
+        // Desenhar curva principal
         ctx.beginPath();
         ctx.strokeStyle = '#00e5ff';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
 
-        data.forEach((val, index) => {
-            const x = (index / (data.length - 1)) * (width - 10) + 5;
-            const y = height - 10 - ((val - min) / range) * (height - 20);
-            if (index === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
+        points.forEach((pt, index) => {
+            if (index === 0) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
         });
         ctx.stroke();
 
-        // Desenhar gradiente sob a curva
+        // Desenhar área sob a curva com gradiente
         ctx.lineTo(width - 5, height);
         ctx.lineTo(5, height);
         ctx.closePath();
         const grad = ctx.createLinearGradient(0, 0, 0, height);
-        grad.addColorStop(0, 'rgba(0, 229, 255, 0.3)');
+        grad.addColorStop(0, 'rgba(0, 229, 255, 0.25)');
         grad.addColorStop(1, 'rgba(0, 229, 255, 0.0)');
         ctx.fillStyle = grad;
         ctx.fill();
+
+        // Ponto cintilante ao vivo na extremidade da série temporal
+        const lastPt = points[points.length - 1];
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(lastPt.x, lastPt.y, 6, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.4)';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(lastPt.x, lastPt.y, 3, 0, 2 * Math.PI);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.restore();
     }
 }

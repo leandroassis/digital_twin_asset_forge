@@ -12,11 +12,68 @@ export class AlertManager {
         this.paintedModelVersion = null;
         this.lastListSignature = null;
 
-        // Expor a função global para os botões HTML de simulação
+        this.currentMode = 'day';
+        
+        // Expor as funções globais para os botões HTML de modo de operação
+        window.setOperationMode = (mode) => this.setOperationMode(mode);
         window.triggerSimulatedAlert = (errorType) => this.triggerSimulation(errorType);
 
+        this.fetchSimulationMode();
         this.fetchAlerts();
         setInterval(() => this.fetchAlerts(), ALERT_POLL_INTERVAL_MS);
+    }
+
+    async fetchSimulationMode() {
+        try {
+            const res = await fetch('/api/simulation/mode');
+            if (res.ok) {
+                const data = await res.json();
+                this.updateModeUI(data.mode || 'day');
+            }
+        } catch (exc) {
+            console.warn("Erro ao buscar modo de operação:", exc);
+        }
+    }
+
+    async setOperationMode(mode) {
+        if (mode !== 'day' && mode !== 'night') return;
+
+        try {
+            const res = await fetch('/api/simulation/mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                this.updateModeUI(data.mode);
+                await this.fetchAlerts();
+
+                // Recarregar telemetria do elemento selecionado na SPA
+                if (window.app && typeof window.app.refreshSelectedTelemetry === 'function') {
+                    window.app.refreshSelectedTelemetry();
+                }
+            }
+        } catch (exc) {
+            console.error("Erro ao alterar modo de operação:", exc);
+        }
+    }
+
+    updateModeUI(mode) {
+        this.currentMode = mode;
+        const btnDay = document.getElementById('btn-mode-day');
+        const btnNight = document.getElementById('btn-mode-night');
+
+        if (btnDay && btnNight) {
+            if (mode === 'night') {
+                btnDay.classList.remove('active');
+                btnNight.classList.add('active');
+            } else {
+                btnNight.classList.remove('active');
+                btnDay.classList.add('active');
+            }
+        }
     }
 
     async fetchAlerts() {
@@ -100,8 +157,13 @@ export class AlertManager {
     }
 
     async triggerSimulation(errorType) {
-        // Obter um elemento aleatório para disparar a simulação
-        const elementId = "20220221KT_PANEL_001"; // ID padrão de teste
+        if (errorType === 'Noite') {
+            await this.setOperationMode('night');
+            return;
+        }
+
+        // Obter um elemento padrão para disparar simulação manual
+        const elementId = "20220221KT_PANEL_001";
         
         const payload = {
             element_id: elementId,

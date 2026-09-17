@@ -27,6 +27,16 @@ class AppController {
         this._initTopbarEvents();
         this.loadProjects();
         this.loadBaSyxTree();
+
+        // Polling de 3 segundos para atualização suave em tempo real sem sobrecarga
+        setInterval(() => {
+            if (this.selectedGlobalId) {
+                const telemetryTab = document.getElementById('tab-telemetry');
+                if (telemetryTab && telemetryTab.classList.contains('active')) {
+                    this.refreshSelectedTelemetry();
+                }
+            }
+        }, 3000);
     }
 
     _initTopbarEvents() {
@@ -114,7 +124,7 @@ class AppController {
     }
 
     async handleElementSelected(globalId) {
-        if (!globalId || this.selectedGlobalId === globalId) return;
+        if (!globalId) return;
         this.selectedGlobalId = globalId;
 
         // Sincronizar seleção na Árvore
@@ -132,8 +142,13 @@ class AppController {
         }
 
         // 2. Carregar Séries Temporais / Telemetria
+        await this.refreshSelectedTelemetry();
+    }
+
+    async refreshSelectedTelemetry() {
+        if (!this.selectedGlobalId) return;
         try {
-            const resTelem = await fetch(`/api/telemetry/${globalId}`);
+            const resTelem = await fetch(`/api/telemetry/${this.selectedGlobalId}`);
             if (resTelem.ok) {
                 const telemetry = await resTelem.json();
                 this.dashboard.renderTelemetry(telemetry);

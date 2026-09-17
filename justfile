@@ -119,6 +119,10 @@ simulate-profiles *args:
 simulate *args:
     {{python}} src/data_gen/send_to_basyx.py {{args}}
 
+# High-speed simulation shortcut for powerful machines: runs data_gen with 16 parallel workers (~3s per round)
+simulate-16 *args:
+    {{python}} src/data_gen/send_to_basyx.py --max-workers 16 {{args}}
+
 # Run the Z-Score AI Anomaly Detection model against InfluxDB and sync alerts with the 3D visualizer
 # (`just run-ai --once`; another rules file via RULES_CONFIG=... or `--config PATH`)
 run-ai *args:

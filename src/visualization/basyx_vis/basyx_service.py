@@ -357,11 +357,38 @@ class VisualizationBasyxService:
                 return sm_id
         return None
 
+    def _query_history_api_direct(self, asset_id: str = "SOLAR_PLANT_FIELD", count: Optional[int] = None) -> Dict[str, Any]:
+        """Consulta diretamente a history-api (:8090) para obter dados historizados do InfluxDB
+        quando a Shell/Submodelo AAS correspondente não estiver no BaSyx.
+        """
+        try:
+            from asset_forge.config import HISTORY_API_HOST, HISTORY_API_PORT
+            url = f"http://{HISTORY_API_HOST}:{HISTORY_API_PORT}/series/{asset_id}"
+            params = {"count": count} if count else {}
+            res = self._session.get(url, params=params, timeout=3)
+            if res.status_code == 200:
+                series = res.json()
+                metrics: Dict[str, List[float]] = {}
+                timestamps: List[str] = []
+                for id_short, points in series.items():
+                    metrics[_METRIC_KEY_MAP.get(id_short, id_short)] = [p.get("value") for p in points]
+                    if not timestamps and points:
+                        timestamps = [p.get("time") for p in points]
+                if metrics and any(metrics.values()):
+                    return {
+                        "globalId": asset_id,
+                        "foundInBasyx": True,
+                        "type": "SolarPanel",
+                        "metrics": metrics,
+                        "timestamps": timestamps,
+                    }
+        except Exception:
+            pass
+        return {}
+
     def get_telemetry_for_element(self, global_id: str, count: Optional[int] = None) -> Dict[str, Any]:
-        """Fetches real historized telemetry for an asset by following its
-        `timeseries` submodel's `Segments.LinkedSegment` to the history-api
-        service (see export/aas/submodels.py::build_timeseries_submodel and
-        history_api.py) -- never simulated/random data.
+        """Busca séries temporais historizadas reais para um ativo no InfluxDB via history-api.
+        Tenta via submodelo `timeseries` do BaSyx e, se ausente, faz fallback direto para a history-api (:8090).
 
         :param global_id: Identificador do elemento selecionado.
         :param count: Limite opcional de últimos N registros por métrica.
@@ -376,28 +403,35 @@ class VisualizationBasyxService:
         }
 
         shell = self.get_shell_by_global_id(global_id)
-        if not shell:
+        endpoint = None
+        query = None
+
+        if shell:
+            sm_id = self._find_submodel_id(shell, "timeseries")
+            if sm_id:
+                parsed = self._parse_submodel_elements(self.get_submodel_elements(sm_id))
+                linked = (parsed.get("Segments") or {}).get("LinkedSegment") or {}
+                endpoint = linked.get("Endpoint")
+                query = linked.get("Query")
+
+        series = {}
+        if endpoint and query:
+            try:
+                params = {"count": count} if count else {}
+                res = self._session.get(f"{endpoint.rstrip('/')}/series/{query}", params=params, timeout=5)
+                if res.status_code == 200:
+                    series = res.json()
+            except Exception as exc:
+                logger.warning(f"Erro ao consultar history-api ({endpoint}) para '{query}': {exc}")
+
+        # Se a busca por submodelo falhou ou retornou vazia, tentar consulta direta à history-api no InfluxDB
+        if not series or not any(series.values()):
+            direct_data = self._query_history_api_direct("SOLAR_PLANT_FIELD", count=count)
+            if direct_data and direct_data.get("metrics"):
+                return {**direct_data, "globalId": global_id}
+
+        if not series:
             return empty
-
-        sm_id = self._find_submodel_id(shell, "timeseries")
-        if not sm_id:
-            return {**empty, "foundInBasyx": True}
-
-        parsed = self._parse_submodel_elements(self.get_submodel_elements(sm_id))
-        linked = (parsed.get("Segments") or {}).get("LinkedSegment") or {}
-        endpoint = linked.get("Endpoint")
-        query = linked.get("Query")
-        if not endpoint or not query:
-            return {**empty, "foundInBasyx": True}
-
-        try:
-            params = {"count": count} if count else {}
-            res = self._session.get(f"{endpoint.rstrip('/')}/series/{query}", params=params, timeout=5)
-            res.raise_for_status()
-            series = res.json()
-        except Exception as exc:
-            logger.warning(f"Erro ao consultar history-api ({endpoint}) para '{query}': {exc}")
-            return {**empty, "foundInBasyx": True}
 
         metrics: Dict[str, List[float]] = {}
         timestamps: List[str] = []
@@ -408,8 +442,8 @@ class VisualizationBasyxService:
 
         return {
             "globalId": global_id,
-            "aasId": shell.get("id"),
-            "idShort": shell.get("idShort"),
+            "aasId": shell.get("id") if shell else None,
+            "idShort": shell.get("idShort") if shell else None,
             "foundInBasyx": True,
             "type": "Inverter" if _INVERTER_ONLY_ID_SHORTS & series.keys() else "SolarPanel",
             "metrics": metrics,

@@ -342,6 +342,60 @@ html, body {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
+/* Legenda Flutuante de Cores 3D */
+.legend-3d {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    background: rgba(13, 17, 23, 0.85);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 14px;
+    z-index: 20;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    font-size: 11px;
+    user-select: none;
+}
+
+.legend-3d .legend-header {
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.legend-3d .legend-items {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.legend-3d .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.legend-3d .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.legend-3d .dot.selected { background: #00e5ff; box-shadow: 0 0 6px rgba(0, 229, 255, 0.8); }
+.legend-3d .dot.overheat { background: #ff1744; box-shadow: 0 0 6px rgba(255, 23, 68, 0.8); }
+.legend-3d .dot.dirt { background: #ffd600; box-shadow: 0 0 6px rgba(255, 214, 0, 0.8); }
+.legend-3d .dot.overcurrent { background: #ff6d00; box-shadow: 0 0 6px rgba(255, 109, 0, 0.8); }
+.legend-3d .dot.night { background: #78909c; box-shadow: 0 0 6px rgba(120, 144, 156, 0.6); }
+
 .floating-controls {
     position: absolute;
     bottom: 20px;
@@ -501,6 +555,30 @@ html, body {
     height: 120px;
 }
 
+.trend-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-left: 4px;
+    display: inline-block;
+}
+
+.trend-up {
+    color: var(--accent-green);
+    background: rgba(0, 230, 118, 0.15);
+}
+
+.trend-down {
+    color: var(--accent-red);
+    background: rgba(255, 23, 68, 0.15);
+}
+
+.trend-flat {
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+}
+
 /* Alertas & Simulação */
 .alert-actions-bar {
     background: var(--bg-card);
@@ -522,22 +600,37 @@ html, body {
     gap: 8px;
 }
 
-.btn-sim {
-    padding: 8px;
+.btn-mode {
+    padding: 10px;
     border-radius: 6px;
     border: 1px solid var(--border-color);
     background: rgba(255, 255, 255, 0.03);
     color: var(--text-primary);
-    font-size: 11px;
-    font-weight: 500;
+    font-size: 12px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.25s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
 }
 
-.btn-sim.overheat:hover { background: rgba(255, 23, 68, 0.2); border-color: var(--accent-red); color: var(--accent-red); }
-.btn-sim.dirt:hover { background: rgba(255, 214, 0, 0.2); border-color: var(--accent-yellow); color: var(--accent-yellow); }
-.btn-sim.overcurrent:hover { background: rgba(255, 109, 0, 0.2); border-color: var(--accent-orange); color: var(--accent-orange); }
-.btn-sim.night:hover { background: rgba(55, 71, 79, 0.4); border-color: #78909c; color: #b0bec5; }
+.btn-mode.day:hover { background: rgba(255, 214, 0, 0.15); border-color: var(--accent-yellow); color: var(--accent-yellow); }
+.btn-mode.day.active {
+    background: linear-gradient(135deg, rgba(255, 214, 0, 0.25), rgba(255, 152, 0, 0.25));
+    border-color: #ffd54f;
+    color: #ffe082;
+    box-shadow: 0 0 12px rgba(255, 214, 0, 0.3);
+}
+
+.btn-mode.night:hover { background: rgba(79, 195, 247, 0.15); border-color: #4fc3f7; color: #81d4fa; }
+.btn-mode.night.active {
+    background: linear-gradient(135deg, rgba(3, 169, 244, 0.25), rgba(63, 81, 181, 0.3));
+    border-color: #4fc3f7;
+    color: #e0f7fa;
+    box-shadow: 0 0 12px rgba(3, 169, 244, 0.35);
+}
 
 .alerts-list {
     display: flex;
