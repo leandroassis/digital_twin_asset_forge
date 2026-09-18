@@ -54,6 +54,23 @@ def test_telemetry_endpoint():
     assert "metrics" in data
     assert "timestamps" in data
 
+def test_telemetry_buffer_accumulation():
+    res1 = client.get("/api/telemetry/BUFFER_TEST_ELEMENT")
+    assert res1.status_code == 200
+    data1 = res1.json()
+    len1 = len(data1["timestamps"])
+
+    res2 = client.get("/api/telemetry/BUFFER_TEST_ELEMENT")
+    assert res2.status_code == 200
+    data2 = res2.json()
+    len2 = len(data2["timestamps"])
+
+    # Garantir que a segunda requisição acumulou a leitura anterior no buffer
+    assert len2 >= len1
+    # O penúltimo timestamp de res2 deve bater com o último de res1
+    assert data2["timestamps"][-2] == data1["timestamps"][-1]
+
+
 def test_simulation_mode_endpoint():
     # Garantir retorno inicial
     get_res = client.get("/api/simulation/mode")
