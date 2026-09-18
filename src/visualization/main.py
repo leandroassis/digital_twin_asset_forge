@@ -55,6 +55,9 @@ from datetime import datetime, timezone
 ACTIVE_ALERTS: Dict[str, Dict[str, Any]] = {}
 OPERATION_MODE: str = "day"
 HISTORICAL_TELEMETRY_LOG: List[Dict[str, Any]] = []
+TELEMETRY_BUFFERS: Dict[str, Dict[str, Any]] = {}
+MAX_BUFFER_POINTS: int = 25
+
 
 def _get_alert_telemetry_overrides(global_id: str) -> Dict[str, float]:
     """Extrai métricas anômalas de alertas ativos para sincronizar perfeitamente
@@ -196,11 +199,13 @@ def set_simulation_mode(payload: SimulationModeModel):
     """Define o modo de operação da simulação ('day' para diurno ou 'night' para noturno)
     e grava um novo registro histórico com o timestamp atual.
     """
-    global OPERATION_MODE
+    global OPERATION_MODE, TELEMETRY_BUFFERS
     if payload.mode not in ("day", "night"):
         raise HTTPException(status_code=400, detail="Modo inválido. Use 'day' ou 'night'.")
     
     OPERATION_MODE = payload.mode
+    TELEMETRY_BUFFERS.clear()
+
     now_str = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
     point_record = {
@@ -286,58 +291,89 @@ def get_basyx_metadata(global_id: str):
 def get_element_telemetry(global_id: str, count: Optional[int] = Query(None, ge=1)):
     """Retorna séries temporais de telemetria para o elemento selecionado.
 
-    Mescla as leituras historizadas do BaSyx/history-api com os pontos gravados
-    durante a alternância dos modos de operação (Abordagem 2), garantindo que
-    a evolução histórica (transição dia/noite) seja acumulada na linha do tempo.
+    Utiliza um buffer circular em memória por ativo para acumular leituras ao vivo
+    em tempo real durante o polling, permitindo o movimento fluido do gráfico.
 
     :param global_id: Identificador do elemento selecionado.
     :param count: Limite opcional de registros mais recentes por métrica.
     :return: Dicionário contendo o tipo de ativo, métricas e timestamps.
     """
-    telemetry = basyx_service.get_telemetry_for_element(global_id, count=count)
-    
-    metrics = telemetry.get("metrics", {})
-    timestamps = telemetry.get("timestamps", [])
-    
-    if not metrics:
-        # Se o elemento não tiver série no BaSyx, prover estrutura base com variações realistas
-        num_initial = 12
-        timestamps = [f"T-{i}m" for i in range(num_initial, 0, -1)]
-        metrics = {"luminosity": [], "temperature": [], "currentDC": [], "voltageDC": [], "powerAC": []}
-        for _ in range(num_initial):
-            sample = _generate_telemetry_sample(OPERATION_MODE, global_id=global_id)
-            for m_key in metrics.keys():
-                metrics[m_key].append(sample.get(m_key, 0.0))
-        telemetry["metrics"] = metrics
-        telemetry["timestamps"] = timestamps
+    global TELEMETRY_BUFFERS
 
-    # Anexar a sequência de pontos históricos gravados durante as alternâncias nesta sessão
-    if HISTORICAL_TELEMETRY_LOG:
-        for record in HISTORICAL_TELEMETRY_LOG:
-            t_str = record["timestamp"]
-            timestamps.append(t_str)
-            rec_metrics = record["metrics"]
-            for m_key in metrics.keys():
-                val = rec_metrics.get(m_key, 0.0 if record["mode"] == "night" else 980.0)
-                metrics[m_key].append(val)
+    buf = TELEMETRY_BUFFERS.get(global_id)
+    if not buf or buf.get("mode") != OPERATION_MODE:
+        base_telemetry = basyx_service.get_telemetry_for_element(global_id, count=count)
+        metrics = base_telemetry.get("metrics", {})
+        timestamps = base_telemetry.get("timestamps", [])
 
-    # Anexar ponto corrente ao vivo com micro-flutuação para animar o gráfico em tempo real
+        if not metrics:
+            num_initial = 18
+            timestamps = [f"T-{i}m" for i in range(num_initial, 0, -1)]
+            metrics = {"luminosity": [], "temperature": [], "currentDC": [], "voltageDC": [], "powerAC": []}
+            for _ in range(num_initial):
+                sample = _generate_telemetry_sample(OPERATION_MODE, global_id=global_id)
+                for m_key in metrics.keys():
+                    metrics[m_key].append(sample.get(m_key, 0.0))
+
+        if HISTORICAL_TELEMETRY_LOG:
+            for record in HISTORICAL_TELEMETRY_LOG:
+                t_str = record["timestamp"]
+                timestamps.append(t_str)
+                rec_metrics = record["metrics"]
+                for m_key in metrics.keys():
+                    val = rec_metrics.get(m_key, 0.0 if record["mode"] == "night" else 980.0)
+                    metrics[m_key].append(val)
+
+        buf = {
+            "globalId": global_id,
+            "type": base_telemetry.get("type", "SolarPanel"),
+            "foundInBasyx": base_telemetry.get("foundInBasyx", False),
+            "metrics": {k: list(v) for k, v in metrics.items()},
+            "timestamps": list(timestamps),
+            "mode": OPERATION_MODE,
+        }
+        TELEMETRY_BUFFERS[global_id] = buf
+
+    # Anexar novo ponto ao vivo com micro-flutuação ao buffer existente
     now_live = datetime.now(timezone.utc).strftime("%H:%M:%S")
     live_sample = _generate_telemetry_sample(OPERATION_MODE, global_id=global_id)
-    timestamps.append(now_live)
-    for m_key in metrics.keys():
-        metrics[m_key].append(live_sample.get(m_key, 0.0))
+    buf["timestamps"].append(now_live)
+    for m_key in buf["metrics"].keys():
+        buf["metrics"][m_key].append(live_sample.get(m_key, 0.0))
 
-    # Se o modo atual for noturno, garantir que a telemetria do ativo reflita o repouso noturno (0.0 lux / 0.0 A / 18°C)
+    # Manter tamanho máximo do buffer circular para permitir rolling suave do gráfico
+    if len(buf["timestamps"]) > MAX_BUFFER_POINTS:
+        excess = len(buf["timestamps"]) - MAX_BUFFER_POINTS
+        buf["timestamps"] = buf["timestamps"][excess:]
+        for m_key in buf["metrics"].keys():
+            buf["metrics"][m_key] = buf["metrics"][m_key][excess:]
+
+    # Clonar dicionário para retorno de resposta
+    result_metrics = {k: list(v) for k, v in buf["metrics"].items()}
+    result_timestamps = list(buf["timestamps"])
+
+    # Se o modo atual for noturno, garantir leituras de repouso noturno
     if OPERATION_MODE == "night":
-        for m_key in metrics.keys():
+        for m_key in result_metrics.keys():
             if m_key in ("luminosity", "currentDC", "voltageDC", "powerAC", "currentAC"):
-                metrics[m_key] = [0.0] * len(metrics[m_key])
+                result_metrics[m_key] = [0.0] * len(result_metrics[m_key])
             elif m_key == "temperature":
-                metrics[m_key] = [round(18.0 + random.uniform(-0.2, 0.2), 1) for _ in metrics[m_key]]
+                result_metrics[m_key] = [round(18.0 + random.uniform(-0.2, 0.2), 1) for _ in result_metrics[m_key]]
 
-    telemetry["mode"] = OPERATION_MODE
-    return telemetry
+    res_telemetry = {
+        "globalId": global_id,
+        "type": buf.get("type", "SolarPanel"),
+        "foundInBasyx": buf.get("foundInBasyx", False),
+        "metrics": result_metrics,
+        "timestamps": result_timestamps,
+        "mode": OPERATION_MODE,
+    }
+
+    if count and count < len(result_timestamps):
+        res_telemetry["timestamps"] = result_timestamps[-count:]
+        res_telemetry["metrics"] = {k: v[-count:] for k, v in result_metrics.items()}
+
+    return res_telemetry
 
 @app.get("/api/alerts")
 def get_active_alerts():

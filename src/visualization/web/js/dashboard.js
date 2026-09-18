@@ -205,30 +205,27 @@ export class DashboardComponent {
         if (data.length < 2) return;
 
         const lastVal = data[data.length - 1];
-        
-        // Isolar regime operacional recente (últimos 8 pontos no mesmo regime)
-        // para evitar que quedas/degraus históricos (ex: Noite -> Dia) esmaguem a escala vertical
-        const threshold = Math.max(Math.abs(lastVal) * 0.4, 5.0);
-        const regimePoints = data.slice(-8).filter(v => Math.abs(v - lastVal) <= threshold);
-        const targetPoints = regimePoints.length > 0 ? regimePoints : [lastVal];
 
-        const recentMin = Math.min(...targetPoints);
-        const recentMax = Math.max(...targetPoints);
-        let recentRange = recentMax - recentMin;
+        // Calcular min e max considerando toda a janela visível para evitar achatamento
+        const dataMin = Math.min(...data);
+        const dataMax = Math.max(...data);
+        let dataRange = dataMax - dataMin;
 
         // Margem adaptativa inteligente para destacar micro-flutuações com dinamismo
-        if (recentRange < 0.5) {
-            recentRange = 1.0;
+        if (dataRange < 0.5) {
+            dataRange = 1.0;
         }
 
-        const min = recentMin - recentRange * 0.35;
-        const max = recentMax + recentRange * 0.35;
+        const padding = dataRange * 0.2;
+        const min = dataMin - padding;
+        const max = dataMax + padding;
         let range = max - min;
         if (range <= 0) range = 1.0;
 
         ctx.clearRect(0, 0, width, height);
 
-        // Identificar índice de transição de modo brusca se presente na janela
+        // Identificar se há transição brusca na janela
+        const threshold = Math.max(Math.abs(lastVal) * 0.4, 5.0);
         let transitionIndex = -1;
         for (let i = 1; i < data.length; i++) {
             if (Math.abs(data[i] - data[i - 1]) > threshold) {
@@ -254,7 +251,7 @@ export class DashboardComponent {
             ctx.fillText('⚡ Transição', Math.min(transX + 3, width - 60), 12);
         }
 
-        // Mapear pontos para a tela com clamping suave nas bordas
+        // Mapear pontos para a tela com proporção completa
         const points = data.map((val, index) => {
             const x = (index / (data.length - 1)) * (width - 10) + 5;
             const normY = (val - min) / range;
